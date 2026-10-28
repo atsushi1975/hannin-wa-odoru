@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.egg-info/
+build/
+dist/
+
+# 仮想環境（この環境では作らないが、他環境向けに除外）
+.venv/
+venv/
+env/
+
+# 環境変数・秘密情報
+.env
+.env.*
+!.env.example
+
+# エディタ / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 実行時生成物
+*.log
+instance/

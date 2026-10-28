@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>犯人は踊る | ルーム</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="room" data-room-id="{{ room_id }}">
+  <header class="topbar">
+    <a href="/" class="brand">犯人は踊る</a>
+    <div class="room-id">
+      ルーム <code id="room-id-label">{{ room_id }}</code>
+      <button id="copy-room" type="button" class="ghost small">コピー</button>
+      <button id="leave-room" type="button" class="ghost small">退出</button>
+    </div>
+  </header>
+
+  <p id="error" class="error" role="alert"></p>
+
+  <main id="join-panel" class="panel" hidden>
+    <h2>このルームに参加</h2>
+    <form id="join-form" class="stack">
+      <label>名前
+        <input id="join-name" maxlength="16" required autocomplete="nickname">
+      </label>
+      <button type="submit" class="primary">参加する</button>
+    </form>
+  </main>
+
+  <main id="lobby-panel" class="panel" hidden>
+    <h2 id="lobby-title">ロビー</h2>
+    <p id="lobby-game" class="muted"></p>
+    <p id="lobby-host" class="muted"></p>
+    <p id="lobby-rule" class="muted"></p>
+    <ul id="lobby-players" class="player-list"></ul>
+    <p id="lobby-status" class="lobby-status" role="status" aria-live="polite"></p>
+    <div class="lobby-actions">
+      <button id="start-button" type="button" class="primary" hidden>ゲーム開始</button>
+      <button id="take-host" type="button" class="ghost small" hidden>ホストを引き継ぐ</button>
+    </div>
+  </main>
+
+  <main id="game-panel" hidden>
+    <section class="players" id="players"></section>
+
+    <section class="table">
+      <div class="piles">
+        <div>
+          <h3>場に出たカード</h3>
+          <div id="played" class="played"></div>
+        </div>
+        <div>
+          <h3>自分のメモ <span class="muted small">（あなただけに表示）</span></h3>
+          <ul id="notes" class="notes"></ul>
+        </div>
+      </div>
+
+      <div id="prompt" class="prompt" role="status" aria-live="polite"></div>
+
+      <div class="hand-wrap">
+        <h3>自分の手札 <span id="hand-count" class="muted"></span></h3>
+        <div id="hand" class="hand"></div>
+      </div>
+
+      <div id="action-panel" class="action-panel" hidden>
+        <div id="action-body"></div>
+        <div class="action-buttons">
+          <button id="confirm-play" type="button" class="primary">出す</button>
+          <button id="cancel-play" type="button" class="ghost">キャンセル</button>
+        </div>
+      </div>
+
+      <div class="log-wrap">
+        <h3>ログ</h3>
+        <ol id="log" class="log"></ol>
+      </div>
+    </section>
+  </main>
+
+  <div id="result-overlay" class="overlay" hidden>
+    <div class="result-card">
+      <h2>ゲーム終了</h2>
+      <p id="result-message"></p>
+      <p id="result-winners" class="result-line"></p>
+      <p id="result-losers" class="result-line"></p>
+      <a href="/" class="button primary">新しいルームを作る</a>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='room.js') }}"></script>
+</body>
+</html>

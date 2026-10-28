@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>犯人は踊る | オンライン</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="home">
+  <main class="home-card">
+    <h1>犯人は踊る</h1>
+    <p class="tagline">3〜8人で遊ぶ、推理カードゲーム。</p>
+
+    <section>
+      <h2>ルームを作る</h2>
+      <form id="create-form" class="stack">
+        <label>名前
+          <input id="create-name" maxlength="16" required autocomplete="nickname">
+        </label>
+        <label>ゲーム
+          <select id="create-game">
+            <option value="hannin">犯人は踊る</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">ルームを作成</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>ルームに参加</h2>
+      <form id="join-form" class="stack">
+        <label>ルーム ID
+          <input id="join-room" maxlength="8" required autocomplete="off">
+        </label>
+        <label>名前
+          <input id="join-name" maxlength="16" required autocomplete="nickname">
+        </label>
+        <button type="submit">参加する</button>
+      </form>
+    </section>
+
+    <p id="error" class="error" role="alert"></p>
+    <p class="note">同じルーム ID を仲間に共有してください。</p>
+  </main>
+
+  <script>
+    const errorEl = document.getElementById("error");
+    const gameSelect = document.getElementById("create-game");
+
+    async function loadGames() {
+      try {
+        const response = await fetch("/api/games");
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!Array.isArray(data.games) || data.games.length === 0) return;
+        gameSelect.replaceChildren();
+        for (const game of data.games) {
+          const option = document.createElement("option");
+          option.value = game.key;
+          option.textContent = `${game.title}（${game.minPlayers}〜${game.maxPlayers}人）`;
+          gameSelect.append(option);
+        }
+        if (data.default) gameSelect.value = data.default;
+      } catch {
+        // 取得できなくても既定の「犯人は踊る」で作成できる。
+      }
+    }
+
+    loadGames();
+
+    async function postJson(url, body) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function remember(roomId, session) {
+      localStorage.setItem(`hannin:${roomId}`, JSON.stringify(session));
+      location.href = `/rooms/${roomId}`;
+    }
+
+    document.getElementById("create-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorEl.textContent = "";
+      const name = document.getElementById("create-name").value.trim();
+      try {
+        const data = await postJson("/api/rooms", { name, game: gameSelect.value });
+        remember(data.roomId, { token: data.token, playerId: data.playerId, name });
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    });
+
+    document.getElementById("join-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorEl.textContent = "";
+      const roomId = document.getElementById("join-room").value.trim();
+      const name = document.getElementById("join-name").value.trim();
+      try {
+        const data = await postJson(`/api/rooms/${roomId}/join`, { name });
+        remember(data.roomId, { token: data.token, playerId: data.playerId, name });
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    });
+  </script>
+</body>
+</html>
