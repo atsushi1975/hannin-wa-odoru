@@ -5,6 +5,7 @@
 
 - ルール: [RULES.md](RULES.md)
 - 設計（スキーマ・状態機械・API）: [DESIGN.md](DESIGN.md)
+- リポジトリ: https://github.com/atsushi1975/hannin-wa-odoru
 
 ## いまの状態
 
@@ -79,7 +80,7 @@ python -m unittest discover -s tests -t . -q
 python -m unittest tests.test_engine.DetectiveTest.test_alibi_blocks_detective -v
 ```
 
-現在 52 件。ゲームロジック（同時解決の整合性）、情報漏洩、API の認証・revision、
+現在 58 件。ゲームロジック（同時解決の整合性）、情報漏洩、API の認証・revision、
 ルーム退出とホスト交代、ゲーム登録、設定検証、SSE チケットを確認している。
 
 ## 構成
@@ -118,21 +119,21 @@ hannin-wa-odoru/
 
 ### リアルタイム通信について
 
-当初案は WebSocket（Socket.io）だが、この環境はオフラインで追加パッケージを
-インストールできない。そこで **SSE（Server-Sent Events）** で実装している。
+当初案は WebSocket（Socket.io）だが、依存を増やさない方針のため、
+追加パッケージ不要の **SSE（Server-Sent Events）** で実装している。
 
 - サーバー → クライアントの即時通知（再接続は自動）
 - クライアント → サーバーは通常の POST（操作時のみ）
 - 認証はヘッダで行い、EventSource には 1 回限りの短命チケットを渡す
 - 通知は「更新あり」の合図だけで、内容は接続ごとに `views` で作り直す
 
-リアルタイム層は `gameplatform/realtime.py` に閉じている。将来 Socket.io や
-WebSocket が使える環境になったら、このモジュールと `web/api.py` の
-`/events` を差し替えればよい。
+リアルタイム層は `gameplatform/realtime.py` に閉じている。将来 Socket.io /
+WebSocket を導入する場合も、このモジュールと `web/api.py` の `/events` を
+差し替えればよい。
 
 ### フロントエンドについて
 
-暫定案は React + Tailwind だが、npm が使えないため現状は素の HTML/CSS/JS。
+暫定案は React + Tailwind だが、依存を増やさない方針のため現状は素の HTML/CSS/JS。
 API は画面に依存しないので、後から React に置き換えられる。
 
 ### 開発用の制限
@@ -148,4 +149,4 @@ API は画面に依存しないので、後から React に置き換えられる
 - 永続化（Redis 等）と複数プロセス対応
 - 手番タイマー、切断時の扱い
 - 2 本目以降のゲーム（UNO / 大富豪 / ノイ / ニムト）
-- ネットワークが使える環境が整ったら、Node.js + React + Socket.io 構成への移行を検討
+- Node.js + React + Socket.io 構成への移行を検討（ネットワークは利用可能。依存追加の判断が必要）
