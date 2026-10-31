@@ -17,11 +17,6 @@
         <label>名前
           <input id="create-name" maxlength="16" required autocomplete="nickname">
         </label>
-        <label>ゲーム
-          <select id="create-game">
-            <option value="hannin">犯人は踊る</option>
-          </select>
-        </label>
         <button type="submit" class="primary">ルームを作成</button>
       </form>
     </section>
@@ -46,26 +41,6 @@
 
   <script>
     const errorEl = document.getElementById("error");
-    const gameSelect = document.getElementById("create-game");
-
-    async function loadGames() {
-      try {
-        const response = await fetch("/api/games");
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!Array.isArray(data.games) || data.games.length === 0) return;
-        gameSelect.replaceChildren();
-        for (const game of data.games) {
-          const option = document.createElement("option");
-          option.value = game.key;
-          option.textContent = `${game.title}（${game.minPlayers}〜${game.maxPlayers}人）`;
-          gameSelect.append(option);
-        }
-        if (data.default) gameSelect.value = data.default;
-      } catch {
-        // 取得できなくても既定の「犯人は踊る」で作成できる。
-      }
-    }
 
     const roomSelect = document.getElementById("join-room");
     const roomListStatus = document.getElementById("room-list-status");
@@ -102,7 +77,6 @@
       }
     }
 
-    loadGames();
     loadRooms();
     setInterval(loadRooms, 10000);
 
@@ -127,7 +101,7 @@
       errorEl.textContent = "";
       const name = document.getElementById("create-name").value.trim();
       try {
-        const data = await postJson("/api/rooms", { name, game: gameSelect.value });
+        const data = await postJson("/api/rooms", { name });
         remember(data.roomId, { token: data.token, playerId: data.playerId, name });
       } catch (error) {
         errorEl.textContent = error.message;
