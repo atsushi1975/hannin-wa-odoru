@@ -86,7 +86,12 @@ def health_payload() -> dict[str, Any]:
     既存の ``GET /api/health`` の ``ok`` / ``games`` はそのまま残す。
     例外が起きたら 500 にせず、status は ``idle`` で JSON として返す。
     """
-    status = health_status()
+    try:
+        waiting, playing = rooms.count_rooms()
+        status = "waiting" if waiting > 0 else "playing" if playing > 0 else "idle"
+    except Exception:
+        status = "idle"
+        playing = 0
     definition = games.get(games.default_key())
     return {
         "ok": True,
@@ -94,6 +99,7 @@ def health_payload() -> dict[str, Any]:
         "title": definition.title,
         "version": _health_version(),
         "status": status,
+        "playing_rooms": int(playing),
     }
 
 

@@ -245,31 +245,42 @@ class ApiTest(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload["ok"])
         self.assertIn("hannin", payload["games"])
+        self.assertIn("playing_rooms", payload)
+        self.assertIsInstance(payload["playing_rooms"], int)
 
     def test_health_status_lifecycle(self):
         # --- idle: ルームが無い（または終了済みしかない）状態 ---
         response = self.client().get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "idle")
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "idle")
+        self.assertEqual(payload["playing_rooms"], 0)
 
         # --- waiting: 開始前のルームが 1 つある ---
         room_id, host_client, host, tokens, clients = self.three_players()
         response = self.client().get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "waiting")
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "waiting")
+        self.assertEqual(payload["playing_rooms"], 0)
 
         # --- playing: 開始済みのルームが進行中 ---
         response = self.start(host_client, room_id, host["token"])
         self.assertEqual(response.status_code, 200)
         response = self.client().get("/health")
-        self.assertEqual(response.get_json()["status"], "playing")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "playing")
+        self.assertGreaterEqual(payload["playing_rooms"], 1)
 
         # --- 終了後: 終了済みルームは rooms._rooms に残るが、進行中ではないので idle ---
         room = rooms.get_room(room_id)
         room.game.phase = FINISHED  # テスト用: 勝敗が決いた状態（engine の FINISHED）
         response = self.client().get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["status"], "idle")
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "idle")
+        self.assertEqual(payload["playing_rooms"], 0)
 
     def test_health_and_api_health_return_the_same_content(self):
         root_response = self.client().get("/health")
@@ -280,9 +291,35 @@ class ApiTest(unittest.TestCase):
         payload = api_response.get_json()
         self.assertEqual(
             set(payload),
-            {"ok", "games", "title", "version", "status"},
+            {"ok", "games", "title", "version", "status", "playing_rooms"},
         )
         self.assertEqual(payload["status"], "idle")
+        self.assertIsInstance(payload["playing_rooms"], int)
+
+    def test_health_playing_rooms_counts(self):
+        # 無ルーム: 0
+        root_payload = self.client().get("/health").get_json()
+        api_payload = self.client().get("/api/health").get_json()
+        self.assertEqual(root_payload["playing_rooms"], 0)
+        self.assertEqual(api_payload["playing_rooms"], 0)
+        self.assertIsInstance(root_payload["playing_rooms"], int)
+        self.assertIsInstance(api_payload["playing_rooms"], int)
+
+        # 作成のみ（開始前）: playing_rooms は 0
+        room_id, host_client, host, tokens, clients = self.three_players()
+        self.assertEqual(self.client().get("/health").get_json()["playing_rooms"], 0)
+        self.assertEqual(self.client().get("/api/health").get_json()["playing_rooms"], 0)
+
+        # 開始後: playing_rooms >= 1
+        self.assertEqual(self.start(host_client, room_id, host["token"]).status_code, 200)
+        self.assertGreaterEqual(self.client().get("/health").get_json()["playing_rooms"], 1)
+        self.assertGreaterEqual(self.client().get("/api/health").get_json()["playing_rooms"], 1)
+
+        # 終了済みは数えない
+        room = rooms.get_room(room_id)
+        room.game.phase = FINISHED
+        self.assertEqual(self.client().get("/health").get_json()["playing_rooms"], 0)
+        self.assertEqual(self.client().get("/api/health").get_json()["playing_rooms"], 0)
 
     def test_health_version_falls_back_to_dev(self):
         """VERSION file missing -> version is 'dev' (cached once per process)."""
@@ -301,18 +338,23 @@ class ApiTest(unittest.TestCase):
         response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertEqual(set(payload), {"title", "version", "status"})
+        self.assertEqual(set(payload), {"title", "version", "status", "playing_rooms"})
         self.assertEqual(payload["title"], "犯人は踊る")
         self.assertEqual(payload["version"], _health_version())
         self.assertEqual(payload["status"], "idle")
+        self.assertIsInstance(payload["playing_rooms"], int)
+        self.assertEqual(payload["playing_rooms"], 0)
 
     def test_standalone_health_app_reflects_room_states(self):
         standalone = create_health_app("犯人は踊る", hannin_status)
         client = standalone.test_client()
         room_id, host_client, host, tokens, clients = self.three_players()
         self.assertEqual(client.get("/health").get_json()["status"], "waiting")
+        self.assertEqual(client.get("/health").get_json()["playing_rooms"], 0)
         self.assertEqual(self.start(host_client, room_id, host["token"]).status_code, 200)
         self.assertEqual(client.get("/health").get_json()["status"], "playing")
+        self.assertGreaterEqual(client.get("/health").get_json()["playing_rooms"], 1)
         room = rooms.get_room(room_id)
         room.game.phase = FINISHED
         self.assertEqual(client.get("/health").get_json()["status"], "idle")
+        self.assertEqual(client.get("/health").get_json()["playing_rooms"], 0)

@@ -25,11 +25,24 @@ def create_health_app(title: str, get_status) -> Flask:
     @app.get("/health")
     def health():
         status = "idle"
+        playing_rooms = 0
         try:
             status = get_status() or "idle"
         except Exception:
             status = "idle"  # 死活確認は例外で 500 にせず、必ず JSON を返す
-        return jsonify({"title": title, "version": _health_version(), "status": status})
+        try:
+            _waiting, playing = rooms.count_rooms()
+            playing_rooms = int(playing)
+        except Exception:
+            playing_rooms = 0
+        return jsonify(
+            {
+                "title": title,
+                "version": _health_version(),
+                "status": status,
+                "playing_rooms": playing_rooms,
+            }
+        )
 
     return app
 
