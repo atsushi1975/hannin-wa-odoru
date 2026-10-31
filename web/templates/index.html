@@ -29,14 +29,15 @@
     <section>
       <h2>ルームに参加</h2>
       <form id="join-form" class="stack">
-        <label>ルーム ID
-          <input id="join-room" maxlength="8" required autocomplete="off">
+        <label>ルーム
+          <select id="join-room" required></select>
         </label>
         <label>名前
           <input id="join-name" maxlength="16" required autocomplete="nickname">
         </label>
         <button type="submit">参加する</button>
       </form>
+      <p id="room-list-status" class="note"></p>
     </section>
 
     <p id="error" class="error" role="alert"></p>
@@ -66,7 +67,44 @@
       }
     }
 
+    const roomSelect = document.getElementById("join-room");
+    const roomListStatus = document.getElementById("room-list-status");
+
+    async function loadRooms() {
+      try {
+        const response = await fetch("/api/rooms");
+        if (!response.ok) return;
+        const data = await response.json();
+        const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+        roomSelect.replaceChildren();
+        if (rooms.length === 0) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "参加できるルームがありません";
+          option.disabled = true;
+          option.selected = true;
+          roomSelect.append(option);
+          roomListStatus.textContent = "先にルームを作成してください。";
+          return;
+        }
+        for (const room of rooms) {
+          const option = document.createElement("option");
+          option.value = room.id;
+          const playerCount = `${room.players.length} / ${room.maxPlayers} 人`;
+          const started = room.started ? "（開始済み）" : "";
+          option.textContent = `${room.id} - ${room.gameTitle} ${playerCount}${started}`;
+          if (room.started) option.disabled = true;
+          roomSelect.append(option);
+        }
+        roomListStatus.textContent = `${rooms.length} 件のルームがあります。`;
+      } catch {
+        roomListStatus.textContent = "ルーム一覧を取得できませんでした。";
+      }
+    }
+
     loadGames();
+    loadRooms();
+    setInterval(loadRooms, 10000);
 
     async function postJson(url, body) {
       const res = await fetch(url, {

@@ -1,9 +1,13 @@
 ﻿from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
+from games.hannin.engine import FINISHED
 from gameplatform import realtime, rooms
+from health_app import create_health_app, hannin_status
 from web import create_app
+from web.api import _health_version
 
 SAFE_TYPES = {"alibi", "trick", "info_op", "rumor", "boy", "civilian", "dog", "witness", "trade"}
 TARGET_TYPES = {"dog", "witness", "trade"}
@@ -241,3 +245,74 @@ class ApiTest(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload["ok"])
         self.assertIn("hannin", payload["games"])
+
+    def test_health_status_lifecycle(self):
+        # --- idle: ルームが無い（または終了済みしかない）状態 ---
+        response = self.client().get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "idle")
+
+        # --- waiting: 開始前のルームが 1 つある ---
+        room_id, host_client, host, tokens, clients = self.three_players()
+        response = self.client().get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "waiting")
+
+        # --- playing: 開始済みのルームが進行中 ---
+        response = self.start(host_client, room_id, host["token"])
+        self.assertEqual(response.status_code, 200)
+        response = self.client().get("/health")
+        self.assertEqual(response.get_json()["status"], "playing")
+
+        # --- 終了後: 終了済みルームは rooms._rooms に残るが、進行中ではないので idle ---
+        room = rooms.get_room(room_id)
+        room.game.phase = FINISHED  # テスト用: 勝敗が決いた状態（engine の FINISHED）
+        response = self.client().get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "idle")
+
+    def test_health_and_api_health_return_the_same_content(self):
+        root_response = self.client().get("/health")
+        api_response = self.client().get("/api/health")
+        self.assertEqual(root_response.status_code, 200)
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(root_response.get_json(), api_response.get_json())
+        payload = api_response.get_json()
+        self.assertEqual(
+            set(payload),
+            {"ok", "games", "title", "version", "status"},
+        )
+        self.assertEqual(payload["status"], "idle")
+
+    def test_health_version_falls_back_to_dev(self):
+        """VERSION file missing -> version is 'dev' (cached once per process)."""
+        with patch("web.api.APP_ROOT", "/nonexistent-path-for-version-test"):
+            with patch("web.api.HEALTH_VERSION_CACHE", None):
+                self.assertEqual(_health_version(), "dev")
+                self.assertEqual(self.client().get("/health").get_json()["version"], "dev")
+                self.assertEqual(self.client().get("/api/health").get_json()["version"], "dev")
+
+        version = _health_version()
+        self.assertTrue(isinstance(version, str) and version != "")
+
+    def test_standalone_health_app_returns_the_common_payload(self):
+        standalone = create_health_app("犯人は踊る", hannin_status)
+        client = standalone.test_client()
+        response = client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(set(payload), {"title", "version", "status"})
+        self.assertEqual(payload["title"], "犯人は踊る")
+        self.assertEqual(payload["version"], _health_version())
+        self.assertEqual(payload["status"], "idle")
+
+    def test_standalone_health_app_reflects_room_states(self):
+        standalone = create_health_app("犯人は踊る", hannin_status)
+        client = standalone.test_client()
+        room_id, host_client, host, tokens, clients = self.three_players()
+        self.assertEqual(client.get("/health").get_json()["status"], "waiting")
+        self.assertEqual(self.start(host_client, room_id, host["token"]).status_code, 200)
+        self.assertEqual(client.get("/health").get_json()["status"], "playing")
+        room = rooms.get_room(room_id)
+        room.game.phase = FINISHED
+        self.assertEqual(client.get("/health").get_json()["status"], "idle")

@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import os
 
-from flask import Flask, render_template
+from flask import Flask, jsonify, render_template
 
 import games  # noqa: F401  （ゲーム登録のための副作用 import）
-from .api import api
+from .api import api, health_payload
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -19,6 +19,11 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
     app.register_blueprint(api)
+
+    @app.get("/health")
+    def health():
+        """共通ヘルスチェック（/api/health と同じ内容を返す）。"""
+        return jsonify(health_payload())
 
     @app.get("/")
     def index():

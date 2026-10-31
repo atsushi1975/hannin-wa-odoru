@@ -35,24 +35,26 @@ pip install -r requirements.txt
 
 ## 起動
 
-```powershell
+```bash
 cd hannin-wa-odoru
 python app.py
 ```
 
-http://127.0.0.1:5000 を開く。ポートを変える場合:
+既定では `0.0.0.0:5000` で待ち受けます。`http://127.0.0.1:5000`（または `http://<PCのIPアドレス>:5000`）を開いてください。
+ポートを変える場合は `--port` を指定します:
 
-```powershell
-$env:PORT = "5055"
-python app.py
+```bash
+python app.py --port 5055
 ```
 
 自動リロード（開発時のみ）:
 
-```powershell
-$env:FLASK_DEBUG = "1"
-python app.py
+```bash
+python app.py --debug
 ```
+
+起動後は `http://<PCのIPアドレス>:5000`（例: `http://192.168.0.13:5000`）をスマホ等から開けます。
+ファイアウォールでポート 5000 が許可されているか確認すること。開発サーバーを LAN に公開するため、信頼できるネットワークでのみ使うこと。
 
 ## 遊び方
 

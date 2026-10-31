@@ -33,3 +33,6 @@ desktop.ini
 # 実行時生成物
 *.log
 instance/
+
+# Generated at Docker build time / locally - not kept in the repository
+VERSION

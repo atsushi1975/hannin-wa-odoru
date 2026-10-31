@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 from typing import Any
 
@@ -38,6 +39,64 @@ def _error(message: str, status: int = 400, **extra: Any):
     return jsonify({"error": message, **extra}), status
 
 
+APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # app.py のあるプロジェクト直下
+HEALTH_VERSION_CACHE: str | None = None
+
+
+def _health_version() -> str:
+    """VERSION ファイルの内容（前後の空白は除く）。ファイルが無ければ "dev"。
+
+    Docker ビルド時に生成されるためリポジトリには置かない（.gitignore 済み）。
+    起動時に 1 回だけ読んでキャッシュする。
+    """
+    global HEALTH_VERSION_CACHE
+    if HEALTH_VERSION_CACHE is None:
+        try:
+            with open(os.path.join(APP_ROOT, "VERSION"), "r", encoding="utf-8") as f:
+                version = f.read().strip()
+            HEALTH_VERSION_CACHE = version if version else "dev"
+        except OSError:
+            HEALTH_VERSION_CACHE = "dev"
+    return HEALTH_VERSION_CACHE
+
+
+def health_status() -> str:
+    """共通ヘルスチェック用の status（waiting / playing / idle）。
+
+    ``rooms.count_rooms()`` から組み立てる。例外が起きたら ``idle`` を返す
+    （死活確認は 500 にせず、必ず JSON を返す）。
+    """
+    try:
+        waiting, playing = rooms.count_rooms()
+        return "waiting" if waiting > 0 else "playing" if playing > 0 else "idle"
+    except Exception:
+        return "idle"
+
+
+def health_payload() -> dict[str, Any]:
+    """共通ヘルスチェックのレスポンスボディ。
+
+    ``GET /health``（アプリ直下）と ``GET /api/health`` の両方から使う 1 つの
+    関数で内容を組み立てる（2 つのパスで二重管理しない）。
+
+    - title: 既定のゲーム（``games.default_key()``）の ``GameDefinition.title``。
+    - version: ``VERSION`` ファイルの内容（前後の空白は除く）。無ければ "dev"。
+    - status: ``waiting`` / ``playing`` / ``idle`` のいずれか。
+
+    既存の ``GET /api/health`` の ``ok`` / ``games`` はそのまま残す。
+    例外が起きたら 500 にせず、status は ``idle`` で JSON として返す。
+    """
+    status = health_status()
+    definition = games.get(games.default_key())
+    return {
+        "ok": True,
+        "games": [item.key for item in games.catalog()],
+        "title": definition.title,
+        "version": _health_version(),
+        "status": status,
+    }
+
+
 @api.get("/games")
 def list_games():
     return jsonify(
@@ -49,6 +108,13 @@ def list_games():
             ],
         }
     )
+
+
+@api.get("/rooms")
+def list_rooms():
+    with rooms.LOCK:
+        rooms_list = [room.public() for room in rooms.list_rooms()]
+    return jsonify({"rooms": rooms_list})
 
 
 @api.post("/rooms")
@@ -244,4 +310,4 @@ def _sse(event: str, data: Any) -> str:
 
 @api.get("/health")
 def health():
-    return jsonify({"ok": True, "games": [definition.key for definition in games.catalog()]})
+    return jsonify(health_payload())

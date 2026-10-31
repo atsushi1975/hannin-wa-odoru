@@ -40,18 +40,18 @@ LABELS: dict[CardType, str] = {
 }
 
 DESCRIPTIONS: dict[CardType, str] = {
-    CardType.FIRST_FINDER: "事件を宣言してゲームを始める。",
-    CardType.CULPRIT: "最後の1枚なら出して勝利。",
-    CardType.DETECTIVE: "1人を指名し、犯人就判定できれば勝利。2周目から。",
-    CardType.ALIBI: "持っていれば犯人でも「違う」と答えられる。",
-    CardType.TRICK: "犯人の味方。犯人の勝敗を共有する。",
-    CardType.DOG: "1人の手札を1枚暴き、犯人なら勝利。",
-    CardType.BOY: "犯人の居場所を自分だけ確認する。",
-    CardType.WITNESS: "1人の手札を自分だけ確認する。",
+    CardType.FIRST_FINDER: "事件を宣言し、ゲームを開始する。",
+    CardType.CULPRIT: "手札の最後の1枚になったら出して勝利。",
+    CardType.DETECTIVE: "1人を指名する。犯人カードを持ち、アリバイを持たない人なら勝利。2周目から。",
+    CardType.ALIBI: "犯人カードを持っていても、探偵に指名されても負けない。",
+    CardType.TRICK: "犯人の仲間になる。犯人の勝敗を共有する。",
+    CardType.DOG: "1人の手札から1枚を当てる。犯人カードなら勝利。",
+    CardType.BOY: "犯人カードを持っているプレイヤーを確認する。",
+    CardType.WITNESS: "1人の手札を確認する。",
     CardType.TRADE: "1人と手札を1枚ずつ交換する。",
-    CardType.RUMOR: "全員が右隣から1枚引く。",
-    CardType.INFO_OP: "全員が左隣へ1枚渡す。",
-    CardType.CIVILIAN: "効果なし。",
+    CardType.RUMOR: "全員が右隣のプレイヤーからカードを1枚引く。",
+    CardType.INFO_OP: "全員が左隣のプレイヤーへカードを1枚渡す。",
+    CardType.CIVILIAN: "効果はない。",
 }
 
 # 公式の32枚構成（第三版）。

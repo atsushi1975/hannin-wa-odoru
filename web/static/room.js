@@ -36,6 +36,29 @@ const els = {
 
 const NEEDS_TARGET = new Set(["detective", "dog", "witness", "trade"]);
 
+const CARD_ICONS = {
+  first_finder: "🔎",
+  culprit: "🔪",
+  detective: "🕵️",
+  alibi: "🛡️",
+  trick: "🤝",
+  dog: "🐕",
+  boy: "👦",
+  witness: "👁️",
+  trade: "🤝",
+  rumor: "🗣️",
+  info_op: "🔄",
+  civilian: "👤",
+};
+
+function cardIcon(type) {
+  return CARD_ICONS[type] || "🃏";
+}
+
+function cardTypeClass(type) {
+  return `card-${String(type).replace(/_/g, "-")}`;
+}
+
 let session = readSession();
 let roomState = null;
 let youState = null;
@@ -235,10 +258,25 @@ function renderHand(hand, pendingSelection) {
     els.hand.append(el("p", "muted", "手札がありません。"));
   }
   for (const card of hand) {
-    const button = el("button", "card" + (selectedCardId === card.id ? " selected" : ""));
+    const button = el(
+      "button",
+      "card " + cardTypeClass(card.type) + (selectedCardId === card.id ? " selected" : "")
+    );
     button.type = "button";
-    button.append(el("span", "card-label", card.label));
-    button.append(el("span", "card-desc", card.description));
+    button.dataset.cardType = card.type;
+
+    const face = el("div", "card-face");
+    const header = el("div", "card-header");
+    header.append(el("span", "card-icon", cardIcon(card.type)));
+    header.append(el("span", "card-name", card.label));
+    face.append(header);
+
+    const body = el("div", "card-body");
+    body.append(el("p", "card-text", card.description));
+    face.append(body);
+
+    button.append(face);
+
     const isPlayable = gameState.phase === "turn" && gameState.currentPlayerId === gameState.me.id;
     if (pendingSelection) {
       button.addEventListener("click", () => submitSelection(card.id));
@@ -384,7 +422,8 @@ function renderPlayed() {
   for (const entry of gameState.played) {
     const item = el("div", "played-item");
     item.append(el("span", "played-owner", entry.playerName));
-    item.append(el("span", "played-card", entry.card.label));
+    const card = el("span", "played-card", `${cardIcon(entry.card.type)} ${entry.card.label}`);
+    item.append(card);
     els.played.append(item);
   }
 }
@@ -404,6 +443,7 @@ function renderNotes() {
       const list = el("span", "note-cards");
       for (const card of note.cards) {
         const chip = el("span", "note-card");
+        chip.append(el("span", "note-card-icon", cardIcon(card.type)));
         chip.append(el("span", "note-card-label", card.label));
         chip.append(el("span", "note-card-desc", card.description));
         list.append(chip);

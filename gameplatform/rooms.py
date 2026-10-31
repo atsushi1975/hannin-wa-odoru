@@ -152,6 +152,50 @@ def find_room(room_id: str) -> Room | None:
     return _rooms.get(room_id)
 
 
+def list_rooms() -> list[Room]:
+    with LOCK:
+        return list(_rooms.values())
+
+
+_TERMINAL_PHASES = {"finished"}
+
+
+def _is_finished(game: Any) -> bool:
+    """ゲームが終了（勝敗が決いた）状態かどうか。
+
+    ``games/hannin/engine.py`` の ``FINISHED``（``Game.phase == "finished"``、
+    または勝敗が ``Game.result`` に入った時点）が終了の判定。
+    終了済みルームは ``rooms._rooms`` に残るため、進行中から除外する。
+    """
+    if getattr(game, "result", None) is not None:
+        return True
+    return getattr(game, "phase", None) in _TERMINAL_PHASES
+
+
+def count_rooms() -> tuple[int, int]:
+    """「開始前」と「進行中」のルーム数を数える。
+
+    戻り値は ``(waiting_count, playing_count)``。
+
+    - waiting: 開始前（ゲーム未開始）のルームの数。
+    - playing: 開始済みで、かつ未終了（勝敗が決まっていない）のルームの数。
+
+    終了済み（``Game.phase == FINISHED``）のルームは ``rooms._rooms`` に残るため、
+    ここでは進行中から除外する。
+    """
+    with LOCK:
+        waiting = 0
+        playing = 0
+        for room in _rooms.values():
+            if not room.started:
+                waiting += 1
+                continue
+            if _is_finished(room.game):
+                continue
+            playing += 1
+        return waiting, playing
+
+
 def authenticate(room_id: str, token: str) -> tuple[Room, str]:
     room = get_room(room_id)
     session = sessions.resolve_for_room(token, room.id)
