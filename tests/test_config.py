@@ -4,7 +4,7 @@ import random
 import unittest
 
 from games.hannin.cards import TOTAL_COUNTS, CardType
-from games.hannin.config import HAND_SIZE, RECIPES, build_deck, recipe_for
+from games.hannin.config import HAND_SIZE, RECIPES, build_deck, max_detectives, recipe_for
 
 
 class RecipeTest(unittest.TestCase):
@@ -74,3 +74,28 @@ class RecipeTest(unittest.TestCase):
                         total,
                         f"{players}人: {card_type}",
                     )
+
+    def test_detectives_never_exceed_players_minus_one(self):
+        for players in RECIPES:
+            self.assertEqual(max_detectives(players), players - 1)
+            for seed in range(300):
+                deck = build_deck(players, random.Random(seed))
+                detectives = sum(card.type is CardType.DETECTIVE for card in deck)
+                self.assertLessEqual(detectives, players - 1, f"{players}人 seed={seed}")
+                self.assertGreaterEqual(detectives, 1, f"{players}人 seed={seed}")
+                self.assertEqual(len(deck), players * HAND_SIZE)
+                self.assertEqual(len({card.id for card in deck}), len(deck))
+
+    def test_fixed_detectives_fit_within_the_limit(self):
+        for players, recipe in RECIPES.items():
+            self.assertLessEqual(recipe.fixed.get(CardType.DETECTIVE, 0), max_detectives(players))
+
+    def test_cap_is_actually_reached_for_small_tables(self):
+        # 上限が効いているか（3人=2枚、4人=3枚まで入ることがある）。
+        for players in (3, 4):
+            counts = {
+                sum(card.type is CardType.DETECTIVE for card in build_deck(players, random.Random(seed)))
+                for seed in range(300)
+            }
+            self.assertIn(players - 1, counts)
+            self.assertNotIn(players, counts)

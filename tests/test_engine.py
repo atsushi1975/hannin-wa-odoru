@@ -383,3 +383,194 @@ class ViewTest(unittest.TestCase):
         game.start()
         with self.assertRaises(KeyError):
             player_view(game, "unknown")
+
+
+class EventDataTest(unittest.TestCase):
+    def _event(self, game, kind):
+        view = player_view(game, "p1")
+        return next(event for event in view["events"] if event["kind"] == kind)
+
+    def test_events_without_data_have_empty_dict(self):
+        game = make_game(
+            [T.FIRST_FINDER, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.CIVILIAN] * 4,
+            [T.CIVILIAN] * 4,
+        )
+        game.start()
+        for event in player_view(game, "p1")["events"]:
+            self.assertEqual(event["data"], {})
+
+    def test_rumor_has_hand_counts_before_move(self):
+        game = make_game(
+            [T.FIRST_FINDER, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.RUMOR, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.CIVILIAN] * 4,
+        )
+        game.start()
+        play(game, 1, T.RUMOR)
+        # 出した後・引く前: p1=3, p2=3, p3=4
+        self.assertEqual(self._event(game, "rumor")["data"], {"handCounts": {"p1": 3, "p2": 3, "p3": 4}})
+
+    def test_info_op_has_hand_counts_before_move(self):
+        game = make_game(
+            [T.FIRST_FINDER, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.INFO_OP, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.CIVILIAN] * 4,
+        )
+        game.start()
+        play(game, 1, T.INFO_OP)
+        for player in game.players:
+            game.submit_selection(player.id, player.hand[0].id)
+        self.assertEqual(self._event(game, "info_op")["data"], {"handCounts": {"p1": 3, "p2": 3, "p3": 4}})
+
+    def test_trade_has_actor_target_and_hand_counts(self):
+        game = make_game(
+            [T.FIRST_FINDER, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.TRADE, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.CIVILIAN] * 4,
+        )
+        game.start()
+        play(game, 1, T.TRADE, target_player_id="p3")
+        game.submit_selection("p2", game.players[1].hand[0].id)
+        game.submit_selection("p3", game.players[2].hand[0].id)
+        self.assertEqual(
+            self._event(game, "trade")["data"],
+            {"actorId": "p2", "targetId": "p3", "handCounts": {"p1": 3, "p2": 3, "p3": 4}},
+        )
+
+    def test_event_data_does_not_leak_card_contents(self):
+        def rumor(game):
+            play(game, 1, T.RUMOR)
+
+        def info_op(game):
+            play(game, 1, T.INFO_OP)
+            for player in game.players:
+                game.submit_selection(player.id, player.hand[0].id)
+
+        def trade(game):
+            play(game, 1, T.TRADE, target_player_id="p3")
+            game.submit_selection("p2", game.players[1].hand[0].id)
+            game.submit_selection("p3", game.players[2].hand[0].id)
+
+        allowed_keys = {"handCounts", "actorId", "targetId"}
+        for card_type, scenario in ((T.RUMOR, rumor), (T.INFO_OP, info_op), (T.TRADE, trade)):
+            with self.subTest(card=card_type.value):
+                game = make_game(
+                    [T.FIRST_FINDER, T.CULPRIT, T.ALIBI, T.CIVILIAN],
+                    [card_type, T.DETECTIVE, T.WITNESS, T.CIVILIAN],
+                    [T.BOY, T.DOG, T.CIVILIAN, T.CIVILIAN],
+                )
+                game.start()
+                scenario(game)
+                all_cards = {card.id for player in game.players for card in player.hand}
+                for player in game.players:
+                    view = player_view(game, player.id)
+                    with_data = [event for event in view["events"] if event["data"]]
+                    self.assertEqual([event["kind"] for event in with_data], [card_type.value])
+                    for event in view["events"]:
+                        self.assertLessEqual(set(event["data"]), allowed_keys)
+                        counts = event["data"].get("handCounts", {})
+                        self.assertTrue(all(isinstance(n, int) for n in counts.values()))
+                        serialized = json.dumps(event["data"], ensure_ascii=False)
+                        for card_id in all_cards:
+                            self.assertNotIn(card_id, serialized)
+                        for known_type in T:
+                            self.assertNotIn(known_type.value, serialized)
+
+
+class RedealTest(unittest.TestCase):
+    def _dealt(self, game):
+        return {player.id: [card.id for card in player.hand] for player in game.players}
+
+    def _assert_no_detective_only_hand(self, game):
+        for player in game.players:
+            self.assertFalse(
+                player.hand and all(card.type is T.DETECTIVE for card in player.hand),
+                f"{player.id} の手札が探偵だけ",
+            )
+
+    def test_finder_with_only_detectives_is_redealt(self):
+        # 第一発見者を出した後の手札が探偵3枚だけ。
+        game = make_game(
+            [T.FIRST_FINDER, T.DETECTIVE, T.DETECTIVE, T.DETECTIVE],
+            [T.CIVILIAN, T.CIVILIAN, T.CIVILIAN, T.CULPRIT],
+            [T.CIVILIAN, T.ALIBI, T.TRADE, T.DOG],
+        )
+        game.start()
+        self._assert_no_detective_only_hand(game)
+        self.assertEqual(game.phase, TURN)
+        self.assertEqual(len(set(all_hand_ids(game)) | {game.played[0]["card"]["id"]}), 12)
+
+    def test_non_finder_with_four_detectives_is_redealt(self):
+        game = make_game(
+            [T.FIRST_FINDER, T.CIVILIAN, T.CIVILIAN, T.CIVILIAN],
+            [T.DETECTIVE] * 4,
+            [T.CIVILIAN, T.ALIBI, T.CULPRIT, T.DOG],
+        )
+        game.start()
+        self._assert_no_detective_only_hand(game)
+
+    def test_redeal_keeps_every_card_and_leaves_no_trace(self):
+        game = make_game(
+            [T.FIRST_FINDER, T.DETECTIVE, T.DETECTIVE, T.DETECTIVE],
+            [T.CIVILIAN, T.CIVILIAN, T.CIVILIAN, T.CULPRIT],
+            [T.CIVILIAN, T.ALIBI, T.TRADE, T.DOG],
+        )
+        expected_ids = {card.id for card in game._deck}
+        game.start()
+
+        dealt = set(all_hand_ids(game)) | {entry["card"]["id"] for entry in game.played}
+        self.assertEqual(dealt, expected_ids)
+        # 配り直しはログにも note にも revision にも出ない（通常の開始と同じ）。
+        self.assertEqual([event.kind for event in game.events], ["start"])
+        self.assertEqual(game.revision, 1)
+        for player in game.players:
+            self.assertEqual(player.notes, [])
+        self.assertEqual(game.played[0]["card"]["type"], T.FIRST_FINDER.value)
+
+    def test_normal_deal_is_not_shuffled(self):
+        # 探偵と犯人だけの手札(効果なしで出せる)や、探偵が混ざる手札は配り直さない。
+        game = make_game(
+            [T.FIRST_FINDER, T.DETECTIVE, T.CIVILIAN, T.CIVILIAN],
+            [T.DETECTIVE, T.DETECTIVE, T.DETECTIVE, T.CULPRIT],
+            [T.CIVILIAN] * 4,
+        )
+        expected = [[card.id for card in game._deck[i * 4 : (i + 1) * 4]] for i in range(3)]
+        game.start()
+        expected[0].remove(game.played[0]["card"]["id"])
+        self.assertEqual([[card.id for card in player.hand] for player in game.players], expected)
+
+    def test_redeal_is_reproducible_with_a_seeded_rng(self):
+        import random
+
+        def deal(seed):
+            from games.hannin.engine import Game
+            from tests.helpers import deck_from_hands
+
+            game = Game(
+                [("p1", "P1"), ("p2", "P2"), ("p3", "P3")],
+                rng=random.Random(seed),
+                deck=deck_from_hands(
+                    [T.FIRST_FINDER, T.DETECTIVE, T.DETECTIVE, T.DETECTIVE],
+                    [T.CIVILIAN, T.CIVILIAN, T.CIVILIAN, T.CULPRIT],
+                    [T.CIVILIAN, T.ALIBI, T.TRADE, T.DOG],
+                ),
+            )
+            game.start()
+            return self._dealt(game)
+
+        self.assertEqual(deal(3), deal(3))
+
+    def test_random_games_never_start_with_detective_only_hand(self):
+        import random
+
+        from games.hannin.engine import Game
+
+        for players in range(3, 9):
+            for seed in range(150):
+                game = Game(
+                    [(f"p{i + 1}", f"P{i + 1}") for i in range(players)],
+                    rng=random.Random(players * 1000 + seed),
+                )
+                game.start()
+                self._assert_no_detective_only_hand(game)

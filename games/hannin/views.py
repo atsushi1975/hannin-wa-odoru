@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from .engine import PENDING, TURN, Game
@@ -59,7 +60,10 @@ def player_view(game: Game, player_id: str) -> dict[str, Any]:
         },
         "played": list(game.played),
         "pending": pending_view,
-        "events": [{"seq": event.seq, "kind": event.kind, "message": event.message} for event in game.events],
+        "events": [
+            {"seq": event.seq, "kind": event.kind, "message": event.message, "data": copy.deepcopy(event.data)}
+            for event in game.events
+        ],
         "result": _result_view(game),
     }
 

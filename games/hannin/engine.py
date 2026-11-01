@@ -12,7 +12,7 @@ from typing import Any
 from gameplatform.errors import InvalidAction
 
 from .cards import Card, CardType
-from .config import HAND_SIZE, RuleConfig, build_deck
+from .config import HAND_SIZE, MAX_REDEALS, RuleConfig, build_deck
 
 LOBBY = "lobby"
 TURN = "turn"
@@ -47,6 +47,8 @@ class Event:
     seq: int
     kind: str
     message: str
+    # メッセージにも出ている公開情報だけを入れる（手札の中身などは入れない）。
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -106,7 +108,8 @@ class Game:
         if self.phase != LOBBY:
             raise InvalidAction("ゲームはすでに開始しています。")
 
-        deck = self._deck if self._deck is not None else build_deck(len(self.players), self.rng)
+        deck = list(self._deck) if self._deck is not None else build_deck(len(self.players), self.rng)
+        deck = self._redeal_if_detective_only(deck)
         for index, player in enumerate(self.players):
             player.hand = deck[index * HAND_SIZE : (index + 1) * HAND_SIZE]
 
@@ -126,6 +129,27 @@ class Game:
         self.phase = TURN
         self.revision += 1
         self._advance_turn()
+
+    def _redeal_if_detective_only(self, deck: list[Card]) -> list[Card]:
+        """誰かの初期手札が探偵だけなら、全体を混ぜ直して配り直す。
+
+        探偵は2周目からしか使えないため、探偵だけの手札は最初の手番で出せる札がなく詰む。
+        プレイヤーに気づかせないため、ログ・note・revision には何も残さない。
+        """
+        for _ in range(MAX_REDEALS):
+            if not self._has_detective_only_hand(deck):
+                break
+            self.rng.shuffle(deck)
+        return deck
+
+    def _has_detective_only_hand(self, deck: list[Card]) -> bool:
+        for index in range(len(self.players)):
+            hand = deck[index * HAND_SIZE : (index + 1) * HAND_SIZE]
+            # 第一発見者は配った直後に場へ出るので、手札として数えない。
+            rest = [card for card in hand if card.type is not CardType.FIRST_FINDER]
+            if rest and all(card.type is CardType.DETECTIVE for card in rest):
+                return True
+        return False
 
     # ------------------------------------------------------------ プレイヤー操作
 
@@ -304,11 +328,16 @@ class Game:
                 player_id=source.id,
                 card=card.to_dict(),
             )
-        self._log("rumor", "うわさ: 全員が右隣から1枚引いた。")
+        self._log(
+            "rumor",
+            "うわさ: 全員が右隣から1枚引いた。",
+            {"handCounts": {player_id: len(hand) for player_id, hand in snapshot.items()}},
+        )
 
     def _resolve_pending(self) -> None:
         pending = self.pending
         assert pending is not None
+        hand_counts = {player.id: len(player.hand) for player in self.players}
         chosen: dict[str, Card] = {}
         for player_id, card_id in pending.selections.items():
             player = self.by_id[player_id]
@@ -337,7 +366,7 @@ class Game:
                     player_id=source.id,
                     card=card.to_dict(),
                 )
-            self._log("info_op", "情報操作: 全員が左隣に1枚渡した。")
+            self._log("info_op", "情報操作: 全員が左隣に1枚渡した。", {"handCounts": hand_counts})
         elif pending.kind == "trade":
             assert pending.target_id is not None
             actor = self.by_id[pending.actor_id]
@@ -362,7 +391,11 @@ class Game:
                 player_id=actor.id,
                 card=actor_card.to_dict(),
             )
-            self._log("trade", f"{actor.name} と {target.name} がカードを交換した。")
+            self._log(
+                "trade",
+                f"{actor.name} と {target.name} がカードを交換した。",
+                {"actorId": actor.id, "targetId": target.id, "handCounts": hand_counts},
+            )
 
         self.pending = None
         self.revision += 1
@@ -512,8 +545,8 @@ class Game:
             }
         )
 
-    def _log(self, kind: str, message: str) -> None:
-        self.events.append(Event(seq=len(self.events) + 1, kind=kind, message=message))
+    def _log(self, kind: str, message: str, data: dict[str, Any] | None = None) -> None:
+        self.events.append(Event(seq=len(self.events) + 1, kind=kind, message=message, data=data or {}))
 
     def _note(self, player: Player, kind: str, message: str, **data: Any) -> None:
         player.notes.append(

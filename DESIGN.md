@@ -95,7 +95,7 @@ Game
 ├── started_by: str | None
 ├── pending: Pending | None
 ├── played: list[PlayedEntry]    # 場に出たカード（公開）
-├── events: list[Event]          # 公開ログ
+├── events: list[Event]          # 公開ログ（rumor / info_op / trade だけ data に手札枚数を持つ）
 └── result: Result | None
 
 Player
@@ -268,7 +268,7 @@ API は必ずこれを通し、ゲーム内部のオブジェクトを直接 `js
   },
   "played": [ { "playerId": "p1", "playerName": "A", "card": { "...": "..." } } ],
   "pending": null,
-  "events": [ { "seq": 1, "kind": "start", "message": "..." } ],
+  "events": [ { "seq": 1, "kind": "start", "message": "...", "data": {} } ],
   "result": null
 }
 ```

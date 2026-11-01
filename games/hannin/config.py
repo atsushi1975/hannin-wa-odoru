@@ -13,6 +13,9 @@ from .cards import TOTAL_COUNTS, Card, CardType
 
 HAND_SIZE = 4
 
+# 初期手札が探偵のみになったときの配り直しの上限（無限ループ防止。通常は到達しない）。
+MAX_REDEALS = 1000
+
 # 少人数でも推理の手がかりがゼロにならないよう、この中のどれか1枚は必ず入れる。
 INFO_CARDS: tuple[CardType, ...] = (CardType.DOG, CardType.BOY, CardType.WITNESS)
 
@@ -104,10 +107,16 @@ def recipe_for(players: int) -> DeckRecipe:
     return RECIPES[players]
 
 
+def max_detectives(players: int) -> int:
+    """山札に入れてよい探偵の最大枚数。探偵だけの手札で詰むのを減らすため、人数-1 枚まで。"""
+    return players - 1
+
+
 def build_deck(players: int, rng: random.Random | None = None) -> list[Card]:
     """人数別レシピから山札を作る。
 
     固定カードを先に確保し、残りのプールから filler 枚をランダムに足す。
+    探偵は ``max_detectives(players)`` 枚（人数-1）を超えないよう、超える分は補充から外す。
     ``guarantee_one_of`` があれば、その種類が固定分に無いときに限り
     プールから1枚を確定で混ぜてから補充する。最後に全体をシャッフルする。
     """
@@ -137,7 +146,19 @@ def build_deck(players: int, rng: random.Random | None = None) -> list[Card]:
             pool.remove(chosen)
             filler_cards.append(chosen)
 
-    filler_cards.extend(pool[: recipe.filler - len(filler_cards)])
+    detective_room = max_detectives(players) - sum(card.type is CardType.DETECTIVE for card in deck)
+    if detective_room < 0:
+        raise ValueError(f"固定の探偵が多すぎます: {players}人 (上限 {max_detectives(players)}枚)")
+    for card in pool:
+        if len(filler_cards) >= recipe.filler:
+            break
+        if card.type is CardType.DETECTIVE:
+            if detective_room == 0:
+                continue
+            detective_room -= 1
+        filler_cards.append(card)
+    if len(filler_cards) < recipe.filler:
+        raise ValueError("探偵の上限を守ると補充するカードが足りません")
     deck.extend(filler_cards)
 
     if recipe.total != players * HAND_SIZE:
