@@ -14,7 +14,7 @@ from gameplatform.errors import ConfigurationError, InvalidAction
 from gameplatform.games import GameDefinition, register
 
 from .config import RuleConfig
-from .cpu import CulpritEstimator, choose_action
+from .cpu import DEFAULT_MEMORY_WINDOW, CulpritEstimator, choose_action
 from .engine import Game
 from .views import player_view
 
@@ -108,7 +108,9 @@ class CpuDriver:
         self.cpu_ids = list(cpu_ids)
         self.rule = RuleConfig(**config)
         self.rng = random.Random()
-        self.estimators = {cpu_id: CulpritEstimator(cpu_id) for cpu_id in self.cpu_ids}
+        self.estimators = {
+            cpu_id: CulpritEstimator(cpu_id, memory_window=DEFAULT_MEMORY_WINDOW) for cpu_id in self.cpu_ids
+        }
         self.steps = 0
 
     def step(self, game: Game) -> bool:

@@ -8,9 +8,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from games.hannin import act
+from games.hannin import CpuDriver, act
 from games.hannin.config import RuleConfig
-from games.hannin.cpu import DETECTIVE_THRESHOLD, CulpritEstimator, choose_action
+from games.hannin.cpu import DEFAULT_MEMORY_WINDOW, DETECTIVE_THRESHOLD, CulpritEstimator, choose_action
 from games.hannin.engine import FINISHED, PENDING, TURN, Game, InvalidAction
 from games.hannin.views import player_view
 
@@ -414,6 +414,143 @@ class MiscTest(EstimatorTestCase):
         self.assertIsNone(estimator.best_target(set(IDS), rng))
 
 
+def civilian_play(index: int) -> dict[str, Any]:
+    return {"playerId": "p2", "playerName": "P2", "card": card("civilian", index)}
+
+
+class Table:
+    """公開情報を1手ずつ積み上げる。1手 = 出札1枚 + event 1件（開始時点で1手済み）。"""
+
+    def __init__(self) -> None:
+        self.events = [event(1, "start")]
+        self.notes: list[dict[str, Any]] = []
+        self.played = [civilian_play(0)]
+
+    def step(
+        self,
+        kind: str,
+        data: dict[str, Any] | None = None,
+        notes: tuple[tuple[str, dict[str, Any]], ...] = (),
+        **view_kwargs: Any,
+    ) -> dict[str, Any]:
+        seq = self.events[-1]["seq"] + 1
+        self.events.append(event(seq, kind, data))
+        self.notes.extend(note(seq, note_kind, **extra) for note_kind, extra in notes)
+        self.played.append(civilian_play(len(self.played)))
+        return self.view(**view_kwargs)
+
+    def view(self, **view_kwargs: Any) -> dict[str, Any]:
+        return make_view(events=list(self.events), notes=list(self.notes), played=list(self.played), **view_kwargs)
+
+
+class MemoryWindowTest(EstimatorTestCase):
+    def test_witness_only_counts_inside_window(self):
+        # 2手目の目撃で p3 が犯人カードと判明。N=2 なので、4手目（目撃から N 手後）で窓の外になる。
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=2)
+        estimator.update(table.view())
+        estimator.update(table.step("witness", notes=(("witness", {"player_id": "p3", "cards": [card("culprit")]}),)))
+        self.assertProbabilities(estimator, [0, 0, 1, 0])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 0, 1, 0])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 3 / 11, 4 / 11, 4 / 11])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 3 / 11, 4 / 11, 4 / 11])
+
+    def test_boy_only_counts_inside_window(self):
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=3)
+        estimator.update(table.view())
+        estimator.update(table.step("boy", notes=(("boy", {"player_id": "p4"}),)))
+        self.assertProbabilities(estimator, [0, 0, 0, 1])
+        estimator.update(table.step("play"))
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 0, 0, 1])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 3 / 11, 4 / 11, 4 / 11])
+
+    def test_move_only_counts_inside_window(self):
+        # 窓の中の移動（trade）は効く。窓から外れると、移動前の手札枚数ベースに戻る。
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=2)
+        estimator.update(table.view())
+        estimator.update(table.step("trade", {"actorId": "p3", "targetId": "p4", **counts(4, 3, 2, 4)}))
+        self.assertProbabilities(estimator, [0, 3 / 11, 3 / 11, 5 / 11])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 3 / 11, 3 / 11, 5 / 11])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 3 / 11, 4 / 11, 4 / 11])
+
+    def test_zero_window_uses_only_current_view(self):
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=0)
+        estimator.update(table.view())
+        self.assertProbabilities(estimator, [0, 3 / 11, 4 / 11, 4 / 11])
+        estimator.update(table.step("play", hand=("culprit", "civilian", "civilian")))
+        self.assertProbabilities(estimator, [1, 0, 0, 0])
+        estimator.update(table.step("play"))
+        self.assertProbabilities(estimator, [0, 3 / 11, 4 / 11, 4 / 11])
+
+    def test_same_as_full_history_until_window_fills(self):
+        table = Table()
+        full = CulpritEstimator("p1")
+        windowed = CulpritEstimator("p1", memory_window=10)
+        views = [
+            table.view(),
+            table.step("witness", notes=(("witness", {"player_id": "p3", "cards": [card("alibi")]}),)),
+            table.step("trade", {"actorId": "p3", "targetId": "p4", **counts(4, 3, 2, 4)}),
+            table.step("boy", notes=(("boy", {"player_id": "p2"}),)),
+        ]
+        for view in views:
+            full.update(view)
+            windowed.update(view)
+            self.assertEqual(values(windowed), values(full))
+
+    def test_repeated_update_gives_same_result(self):
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=2)
+        views = [table.view()]
+        views.append(table.step("witness", notes=(("witness", {"player_id": "p3", "cards": [card("culprit")]}),)))
+        views.append(table.step("play"))
+        views.append(table.step("play"))
+        views.append(table.step("play"))
+        for view in views:
+            estimator.update(view)
+            first = values(estimator)
+            estimator.update(view)
+            estimator.update(view)
+            self.assertEqual(values(estimator), first)
+
+    def test_history_stays_within_window(self):
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=3)
+        estimator.update(table.view())
+        for _ in range(30):
+            estimator.update(table.step("play"))
+        self.assertLessEqual(len(estimator._history), 4)
+
+    def test_trick_players_come_from_all_played_cards(self):
+        table = Table()
+        estimator = CulpritEstimator("p1", memory_window=1)
+        estimator.update(table.view())
+        table.played.append({"playerId": "p3", "playerName": "P3", "card": card("trick")})
+        estimator.update(table.view())
+        for _ in range(5):
+            estimator.update(table.step("play"))
+        self.assertEqual(estimator.trick_player_ids(), frozenset({"p3"}))
+
+    def test_negative_window_is_rejected(self):
+        with self.assertRaises(ValueError):
+            CulpritEstimator("p1", memory_window=-1)
+
+    def test_cpu_driver_passes_default_window(self):
+        game = Game([("h", "H"), ("c1", "C1"), ("c2", "C2")], config=RuleConfig(), rng=random.Random(0))
+        driver = CpuDriver(game, ["c1", "c2"], {})
+        for estimator in driver.estimators.values():
+            self.assertEqual(estimator._memory_window, DEFAULT_MEMORY_WINDOW)
+
+
 TRICK_PLAYED = [{"playerId": "p1", "playerName": "P1", "card": card("trick")}]
 
 
@@ -634,7 +771,14 @@ def has_legal_play(game: Game, player_id: str) -> bool:
     return False
 
 
-def selfplay(players: int, games: int, *, seed_base: int = 0, config: RuleConfig | None = None) -> SelfPlayStats:
+def selfplay(
+    players: int,
+    games: int,
+    *,
+    seed_base: int = 0,
+    config: RuleConfig | None = None,
+    memory_window: int | None = None,
+) -> SelfPlayStats:
     """全員 CPU で最後まで対戦させ、不変条件の違反を数える。"""
     config = config or RuleConfig()
     stats = SelfPlayStats()
@@ -646,7 +790,7 @@ def selfplay(players: int, games: int, *, seed_base: int = 0, config: RuleConfig
         rng = random.Random(seed + 5_000_000)
         game.start()
         stats.games += 1
-        estimators = {player_id: CulpritEstimator(player_id) for player_id, _ in roster}
+        estimators = {player_id: CulpritEstimator(player_id, memory_window) for player_id, _ in roster}
         last_revision: dict[str, int] = {}
 
         def sync() -> None:
@@ -698,10 +842,10 @@ def selfplay(players: int, games: int, *, seed_base: int = 0, config: RuleConfig
 class SelfPlayTest(unittest.TestCase):
     GAMES = 100
 
-    def check(self, players: int, games: int, config: RuleConfig) -> SelfPlayStats:
+    def check(self, players: int, games: int, config: RuleConfig, memory_window: int | None = None) -> SelfPlayStats:
         # 推定の矛盾（合計0）や読み飛ばしが起きれば warning が出るので、それも許さない。
         with self.assertNoLogs("hannin.cpu", level="WARNING"):
-            stats = selfplay(players, games, config=config)
+            stats = selfplay(players, games, config=config, memory_window=memory_window)
         self.assertEqual(stats.rejected, 0, f"{players}人: engine に拒否された payload")
         self.assertEqual(stats.stuck, 0, f"{players}人: 合法手があるのに行動できない/手数超過")
         # engine 側の詰み（出せる札が無い手札）は CPU の責任ではないので別に数える。
@@ -719,6 +863,16 @@ class SelfPlayTest(unittest.TestCase):
         for players in range(3, 9):
             with self.subTest(players=players):
                 self.check(players, 30, CONFIGS[1])
+
+    def test_default_memory_window(self):
+        for players in range(3, 9):
+            with self.subTest(players=players):
+                self.check(players, self.GAMES, CONFIGS[0], memory_window=DEFAULT_MEMORY_WINDOW)
+
+    def test_other_rule_settings_with_memory_window(self):
+        for players in range(3, 9):
+            with self.subTest(players=players):
+                self.check(players, 30, CONFIGS[1], memory_window=DEFAULT_MEMORY_WINDOW)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,9 @@ logger = logging.getLogger("hannin.cpu")
 # 探偵を出す確率のしきい値（固定。手札枚数などでは変えない）。
 DETECTIVE_THRESHOLD = 0.72
 
+# 推定が参照する直近の出札数（手数）。これより前の公開情報は使わない。None なら全期間。
+DEFAULT_MEMORY_WINDOW = 10
+
 _EPS = 1e-12
 _CULPRIT = CardType.CULPRIT.value
 
@@ -38,10 +41,18 @@ class CulpritEstimator:
     ゲーム開始直後に作り、revision が変わるたびに ``update(view)`` を呼ぶ。
     1回の update に移動イベントが複数含まれる場合は seq 順に処理するが、
     自分の note の対応づけは kind ごとの順番で行う（1件ずつ届く前提が最も正確）。
+
+    ``memory_window`` を指定すると、直近 N 手（出札数の増加）より前の情報は使わない。
+    窓の開始点の view から推定をやり直す。None なら試合開始からの全情報を使う。
     """
 
-    def __init__(self, my_id: str) -> None:
+    def __init__(self, my_id: str, memory_window: int | None = None) -> None:
+        if memory_window is not None and memory_window < 0:
+            raise ValueError("memory_window は 0 以上で指定してください")
         self.my_id = my_id
+        self._memory_window = memory_window
+        self._history: deque[dict[str, Any]] = deque()
+        self._replaying = False
         self._ids: list[str] = []
         self._names: list[str] = []
         self._index: dict[str, int] = {}
@@ -79,6 +90,66 @@ class CulpritEstimator:
         elif ids != self._ids:
             raise ValueError("プレイヤーの構成が変わりました")
 
+        if self._memory_window is None:
+            self._advance(view)
+        else:
+            self._remember(view)
+            if self._forget_old_views():
+                self._replay()
+            else:
+                self._advance(view)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "p = %s",
+                {name: round(value, 4) for name, value in zip(self._names, self._p)},
+            )
+
+    # ------------------------------------------------------------------ 窓
+
+    def _remember(self, view: dict[str, Any]) -> None:
+        """窓のために view を保存する。同じ revision なら最新の内容で置き換えて、履歴を増やさない。"""
+        if self._history and self._history[-1]["revision"] == view["revision"]:
+            self._history[-1] = view
+        else:
+            self._history.append(view)
+
+    def _forget_old_views(self) -> bool:
+        """出札数が 現在 − N 以上になる最も古い view より前を捨てる。開始点が動いたら True。"""
+        threshold = len(self._history[-1]["played"]) - self._memory_window
+        dropped = False
+        while len(self._history[0]["played"]) < threshold:
+            self._history.popleft()
+            dropped = True
+        return dropped
+
+    def _replay(self) -> None:
+        """窓の開始点の view で初期化し、以降の view を今までと同じ処理で流し直す。"""
+        history = list(self._history)
+        self._replaying = True
+        try:
+            self._start_window(history[0])
+            for view in history[1:]:
+                self._advance(view)
+        finally:
+            self._replaying = False
+
+    def _start_window(self, view: dict[str, Any]) -> None:
+        """窓の開始点。その時点の手札から初期化し、開始点に含まれる events / notes は適用しない。"""
+        me = view["me"]
+        holding = any(card["type"] == _CULPRIT for card in me["hand"])
+        self._hand_counts = [int(player["handCount"]) for player in view["players"]]
+        self._seen_events = {event["seq"] for event in view["events"]}
+        self._seen_notes = {note["seq"] for note in me["notes"]}
+        self._initialized = True
+        self._holding = holding
+        self._init_from_hand_counts(holding)
+        self._settle(view, holding)
+        self._update_trick_ids(view)
+
+    # ------------------------------------------------------------------ 1 view の処理
+
+    def _advance(self, view: dict[str, Any]) -> None:
         me = view["me"]
         now_holding = any(card["type"] == _CULPRIT for card in me["hand"])
         self._hand_counts = [int(player["handCount"]) for player in view["players"]]
@@ -117,6 +188,11 @@ class CulpritEstimator:
         for note in results:
             self._apply_result_note(note)
 
+        self._settle(view, now_holding)
+        self._holding = now_holding
+        self._update_trick_ids(view)
+
+    def _settle(self, view: dict[str, Any], now_holding: bool) -> None:
         revealed = next(
             (entry["playerId"] for entry in view.get("played", []) if entry["card"]["type"] == _CULPRIT),
             None,
@@ -127,18 +203,13 @@ class CulpritEstimator:
         else:
             self._reconcile_with_hand(now_holding)
             self._zero_empty_hands()
-        self._holding = now_holding
+
+    def _update_trick_ids(self, view: dict[str, Any]) -> None:
         self._trick_ids = frozenset(
             entry["playerId"]
             for entry in view.get("played", [])
             if entry["card"]["type"] == CardType.TRICK.value and entry["playerId"] != self.my_id
         )
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "p = %s",
-                {name: round(value, 4) for name, value in zip(self._names, self._p)},
-            )
 
     # ------------------------------------------------------------------ 初期値
 
@@ -154,6 +225,15 @@ class CulpritEstimator:
         total = sum(weights)
         self._p = [weight / total for weight in weights]
 
+    def _init_from_hand_counts(self, holding: bool) -> None:
+        """窓の開始点の初期値。持っていれば確定、いなければ手札枚数に比例（手札0の人は0）。"""
+        me = self._index[self.my_id]
+        if holding:
+            self._set_certain(me)
+            return
+        self._p = [0.0 if index == me else float(count) for index, count in enumerate(self._hand_counts)]
+        self._normalize()
+
     # ------------------------------------------------------------------ 移動
 
     def _apply_move(
@@ -167,7 +247,8 @@ class CulpritEstimator:
         notes = {note_kind: queues[note_kind].popleft() for note_kind in _MOVE_NOTES[kind] if queues.get(note_kind)}
         parsed = self._parse_move(event)
         if parsed is None:
-            logger.warning("イベント seq=%s (%s) に有効な data が無いため、推定から読み飛ばします。", event.get("seq"), kind)
+            if not self._replaying:
+                logger.warning("イベント seq=%s (%s) に有効な data が無いため、推定から読み飛ばします。", event.get("seq"), kind)
             return
         hand_counts, edges = parsed
 
@@ -277,7 +358,8 @@ class CulpritEstimator:
         me = self._index[self.my_id]
         others = [i for i in range(len(self._ids)) if i != me]
         holders = [i for i in others if self._hand_counts[i] > 0] or others
-        logger.warning("確率の合計が0になりました。手札のある他プレイヤーで均等に戻します。")
+        if not self._replaying:
+            logger.warning("確率の合計が0になりました。手札のある他プレイヤーで均等に戻します。")
         self._p = [1 / len(holders) if i in holders else 0.0 for i in range(len(self._ids))]
 
     def _pick(self, excluded_ids: Collection[str], rng: random.Random, *, largest: bool) -> str | None:
