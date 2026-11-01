@@ -36,7 +36,10 @@
     <ul id="lobby-players" class="player-list"></ul>
     <p id="lobby-status" class="lobby-status" role="status" aria-live="polite"></p>
     <div class="lobby-actions">
-      <button id="start-button" type="button" class="primary" hidden>ゲーム開始</button>
+      <div id="start-wrap" class="start-wrap" hidden>
+        <button id="start-button" type="button" class="primary" aria-haspopup="menu" aria-expanded="false">ゲーム開始 ▾</button>
+        <ul id="start-menu" class="start-menu" role="menu" hidden></ul>
+      </div>
       <button id="take-host" type="button" class="ghost small" hidden>ホストを引き継ぐ</button>
     </div>
   </main>

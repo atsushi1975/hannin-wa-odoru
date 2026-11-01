@@ -6,14 +6,22 @@
 
 from __future__ import annotations
 
+import logging
+import random
 from typing import Any
 
 from gameplatform.errors import ConfigurationError, InvalidAction
 from gameplatform.games import GameDefinition, register
 
 from .config import RuleConfig
+from .cpu import CulpritEstimator, choose_action
 from .engine import Game
 from .views import player_view
+
+logger = logging.getLogger("hannin.cpu")
+
+# CPU の手番を進める上限（万一の無限ループ防止）。1 ゲームの手数より十分大きい。
+_MAX_CPU_STEPS = 5000
 
 # ルーム作成時に外から変更してよい設定。人数（min/max）はロビーの定員と
 # 一致させる必要があるため、ここでは変更させない。
@@ -89,6 +97,51 @@ def act(game: Game, player_id: str, payload: dict[str, Any]) -> None:
         raise InvalidAction("type が不正です。")
 
 
+class CpuDriver:
+    """CPU プレイヤーの手番を1手ずつ進める。
+
+    ``step(game)`` は CPU が1手打てば True、打てなければ False を返す
+    （人間の番・ゲーム終了・詰み）。待ち時間は呼び出し側（rooms）が管理する。
+    """
+
+    def __init__(self, game: Game, cpu_ids: list[str], config: dict[str, Any]) -> None:
+        self.cpu_ids = list(cpu_ids)
+        self.rule = RuleConfig(**config)
+        self.rng = random.Random()
+        self.estimators = {cpu_id: CulpritEstimator(cpu_id) for cpu_id in self.cpu_ids}
+        self.steps = 0
+
+    def step(self, game: Game) -> bool:
+        if self.steps >= _MAX_CPU_STEPS:
+            logger.warning("CPU の手数が上限 %d に達したため止めました。", _MAX_CPU_STEPS)
+            return False
+        views = {cpu_id: player_view(game, cpu_id) for cpu_id in self.cpu_ids}
+        for cpu_id in self.cpu_ids:
+            self.estimators[cpu_id].update(views[cpu_id])
+
+        for cpu_id in self.cpu_ids:
+            payload = choose_action(views[cpu_id], self.estimators[cpu_id], self.rng, self.rule)
+            if payload is None:
+                continue
+            try:
+                act(game, cpu_id, payload)
+            except InvalidAction:
+                logger.exception("CPU %s の行動が拒否されました: %s", cpu_id, payload)
+                return False
+            self.steps += 1
+            return True
+
+        self._warn_if_stuck(game, views)
+        return False
+
+    def _warn_if_stuck(self, game: Game, views: dict[str, dict[str, Any]]) -> None:
+        if game.phase != "turn":
+            return
+        current = game.players[game.current_index].id
+        if current in views:
+            logger.warning("CPU %s は出せる札がなく、手番が進みません（詰み）。", current)
+
+
 GAME = GameDefinition(
     key="hannin",
     title="犯人は踊る",
@@ -99,6 +152,7 @@ GAME = GameDefinition(
     view=player_view,
     act=act,
     normalize_config=normalize_config,
+    cpu_driver=CpuDriver,
 )
 
 register(GAME)

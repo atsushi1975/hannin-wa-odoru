@@ -368,7 +368,7 @@ SSE の配信も同じロックでスナップショットを取ってから行�
 | POST | `/api/rooms/<id>/host` | ○ | ホスト権を引き継ぐ（開始前のみ） |
 | GET | `/api/rooms/<id>` | — | 公開情報（参加者一覧） |
 | GET | `/api/rooms/<id>/state` | ○ | 自分用にフィルタした状態 |
-| POST | `/api/rooms/<id>/start` | ○ | ホストのみ。開始 |
+| POST | `/api/rooms/<id>/start` | ○ | ホストのみ。`{"cpuCount": n}` の CPU を追加して開始（既定 0） |
 | POST | `/api/rooms/<id>/actions` | ○ | ゲーム操作 |
 | POST | `/api/rooms/<id>/stream-ticket` | ○ | SSE 用チケット |
 | GET | `/api/rooms/<id>/events?ticket=` | チケット | SSE ストリーム |

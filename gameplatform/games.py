@@ -38,6 +38,9 @@ class GameDefinition:
     act: Callable[[Any, str, dict[str, Any]], None]
     # 外部入力を検証し、保存してよい設定だけを返す。
     normalize_config: Callable[[Any], dict[str, Any]]
+    # (game, cpu_ids, normalized_config) -> CPU の手番を1手ずつ進める駆動器（step(game) -> bool）。
+    # None なら CPU 参加に対応しない。
+    cpu_driver: Callable[[Any, list[str], dict[str, Any]], Any] | None = None
 
     def summary(self) -> dict[str, Any]:
         return {

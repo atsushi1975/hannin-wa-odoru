@@ -214,9 +214,13 @@ def room_state(room_id: str):
 
 @api.post("/rooms/<room_id>/start")
 def start(room_id: str):
+    data = request.get_json(silent=True) or {}
+    cpu_count = data.get("cpuCount", 0)
+    if isinstance(cpu_count, bool) or not isinstance(cpu_count, int) or cpu_count < 0:
+        return _error("cpuCount は0以上の整数で指定してください。")
     try:
         with rooms.LOCK:
-            room, player_id = rooms.start_game(room_id, _token())
+            room, player_id = rooms.start_game(room_id, _token(), cpu_count)
         realtime.publish(room_id)
         with rooms.LOCK:
             return jsonify(_room_state(room, player_id))
@@ -252,6 +256,7 @@ def action(room_id: str):
                     str(exc), 400, game=room.definition.view(game, player_id)
                 )
 
+            rooms.kick_cpus(room)
             payload = _room_state(room, player_id)
         realtime.publish(room_id)
         return jsonify(payload)

@@ -13,6 +13,8 @@ const els = {
   lobbyStatus: document.getElementById("lobby-status"),
   lobbyPlayers: document.getElementById("lobby-players"),
   startButton: document.getElementById("start-button"),
+  startWrap: document.getElementById("start-wrap"),
+  startMenu: document.getElementById("start-menu"),
   takeHost: document.getElementById("take-host"),
   gamePanel: document.getElementById("game-panel"),
   players: document.getElementById("players"),
@@ -135,6 +137,43 @@ function apply(data) {
   }
 }
 
+// 開始できる合計人数（人間＋CPU）の選択肢。人間の人数に応じて、最小〜最大になるように作る。
+function startOptions(humans, minPlayers, maxPlayers) {
+  const options = [];
+  for (let total = Math.max(minPlayers, humans); total <= maxPlayers; total += 1) {
+    options.push({ total, cpuCount: total - humans });
+  }
+  return options;
+}
+
+function closeStartMenu() {
+  els.startMenu.hidden = true;
+  els.startButton.setAttribute("aria-expanded", "false");
+}
+
+function renderStartMenu(options) {
+  els.startMenu.replaceChildren();
+  for (const option of options) {
+    const item = el("li", "", null);
+    item.setAttribute("role", "none");
+    const button = el(
+      "button",
+      "start-option",
+      option.cpuCount === 0
+        ? `CPUなしで開始（${option.total}人）`
+        : `CPU ${option.cpuCount} 人を加えて開始（計${option.total}人）`
+    );
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.addEventListener("click", () => {
+      closeStartMenu();
+      startGame(option.cpuCount);
+    });
+    item.append(button);
+    els.startMenu.append(item);
+  }
+}
+
 function renderLobby() {
   els.lobbyGame.textContent = roomState.gameTitle
     ? `${roomState.gameTitle}（${roomState.players.length} / ${roomState.maxPlayers} 人）`
@@ -142,14 +181,16 @@ function renderLobby() {
   const host = roomState.players.find((player) => player.id === roomState.hostId);
   const hostName = host ? host.name : "?";
   const minPlayers = roomState.minPlayers || 3;
-  const needed = Math.max(0, minPlayers - roomState.players.length);
+  const maxPlayers = roomState.maxPlayers;
+  const humans = roomState.players.length;
   const isHost = youState
     ? Boolean(youState.isHost)
     : Boolean(session && roomState.hostId === session.playerId);
   const myId = youState ? youState.id : session && session.playerId;
+  const options = startOptions(humans, minPlayers, maxPlayers);
 
   els.lobbyHost.textContent = `ホスト: ${hostName}`;
-  els.lobbyRule.textContent = `${minPlayers}人以上で開始できます。`;
+  els.lobbyRule.textContent = `${minPlayers}〜${maxPlayers}人で開始できます（CPUを含む）。`;
 
   els.lobbyPlayers.replaceChildren();
   for (const player of roomState.players) {
@@ -162,19 +203,20 @@ function renderLobby() {
     els.lobbyPlayers.append(item);
   }
 
-  els.startButton.hidden = !isHost;
-  els.startButton.disabled = needed > 0;
-  els.startButton.textContent = needed > 0 ? `あと ${needed} 人` : "ゲーム開始";
+  els.startWrap.hidden = !isHost;
+  renderStartMenu(options);
   els.takeHost.hidden = isHost;
 
   if (!isHost) {
     els.lobbyStatus.textContent =
       `${hostName} さんが「ゲーム開始」を押すと始まります。` +
       "操作できない場合は「ホストを引き継ぐ」を押してください。";
-  } else if (needed > 0) {
-    els.lobbyStatus.textContent = `あと ${needed} 人そろうと開始できます。`;
+  } else if (humans < minPlayers) {
+    els.lobbyStatus.textContent =
+      `あと ${minPlayers - humans} 人そろうか、CPUを加えると開始できます。「ゲーム開始 ▾」から選んでください。`;
   } else {
-    els.lobbyStatus.textContent = "全員そろいました。「ゲーム開始」を押してください。";
+    els.lobbyStatus.textContent =
+      "全員そろいました。「ゲーム開始 ▾」からCPUの人数を選んで開始できます。";
   }
 }
 
@@ -577,14 +619,32 @@ els.joinForm.addEventListener("submit", async (event) => {
   }
 });
 
-els.startButton.addEventListener("click", async () => {
+els.startButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const open = els.startMenu.hidden;
+  els.startMenu.hidden = !open;
+  els.startButton.setAttribute("aria-expanded", String(open));
+});
+
+document.addEventListener("click", (event) => {
+  if (!els.startWrap.contains(event.target)) closeStartMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeStartMenu();
+});
+
+async function startGame(cpuCount) {
   try {
-    const data = await request(`/api/rooms/${roomId}/start`, { method: "POST", body: {} });
+    const data = await request(`/api/rooms/${roomId}/start`, {
+      method: "POST",
+      body: { cpuCount },
+    });
     apply(data);
   } catch (error) {
     showError(error.message);
   }
-});
+}
 
 els.takeHost.addEventListener("click", async () => {
   if (!window.confirm("このルームのホスト権を引き継ぎますか？")) return;

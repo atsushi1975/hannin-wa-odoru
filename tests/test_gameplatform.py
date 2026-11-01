@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
+import random
 import unittest
+from unittest.mock import patch
 
 import games  # noqa: F401  （ゲーム登録）
 from gameplatform import games as game_registry
@@ -129,6 +131,69 @@ class RoomTest(unittest.TestCase):
         # 開始後は引き継げない（ホストのトークンもまだ有効）。
         with self.assertRaises(RoomError):
             rooms.take_host(room.id, host_token)
+
+
+class CpuDelayDefaultTest(unittest.TestCase):
+    def test_cpu_turn_delay_is_1500ms(self):
+        self.assertEqual(rooms.CPU_TURN_DELAY_SECONDS, 1.5)
+
+
+class CpuPlayersTest(unittest.TestCase):
+    def setUp(self):
+        rooms.reset()
+        realtime.reset()
+        patcher = patch.object(rooms, "CPU_TURN_DELAY_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_start_with_cpus_adds_them_as_players(self):
+        room, host_id, host_token = rooms.create_room("P1")
+        started, _ = rooms.start_game(room.id, host_token, 2)
+        rooms.wait_for_cpus(room.id)
+        names = [player["name"] for player in started.players]
+        self.assertEqual(names, ["P1", "CPU1", "CPU2"])
+        self.assertEqual([player.id for player in started.game.players][0], host_id)
+        self.assertEqual(len(started.game.players), 3)
+        self.assertIsNotNone(started.cpu_driver)
+        self.assertEqual(started.public()["players"][1]["name"], "CPU1")
+
+    def test_cpu_names_skip_human_names(self):
+        room, _, host_token = rooms.create_room("CPU1")
+        rooms.join_room(room.id, "P2")
+        started, _ = rooms.start_game(room.id, host_token, 2)
+        rooms.wait_for_cpus(room.id)
+        names = [player["name"] for player in started.players]
+        self.assertEqual(names, ["CPU1", "P2", "CPU2", "CPU3"])
+
+    def test_cpu_count_is_limited_by_capacity_and_minimum(self):
+        room, _, host_token = rooms.create_room("P1")
+        with self.assertRaises(RoomError):
+            rooms.start_game(room.id, host_token, 1)
+        self.assertEqual(len(room.players), 1)
+        self.assertFalse(room.started)
+
+        for index in range(2, 4):
+            rooms.join_room(room.id, f"P{index}")
+        with self.assertRaises(RoomError):
+            rooms.start_game(room.id, host_token, 6)
+        self.assertFalse(room.started)
+
+    def test_cpu_turns_run_until_a_human_must_act(self):
+        definition = game_registry.get("hannin")
+        for seed in range(30):
+            with self.subTest(seed=seed):
+                ids = ["h1", "c1", "c2", "c3"]
+                game = definition.create([(pid, pid) for pid in ids], {})
+                driver = definition.cpu_driver(game, ids[1:], {})
+                driver.rng = random.Random(seed)
+                game.start()
+                while driver.step(game):
+                    pass
+                if game.phase == "turn":
+                    self.assertEqual(game.players[game.current_index].id, "h1")
+                elif game.phase == "pending":
+                    required = [pid for pid in game.pending.required if pid not in game.pending.selections]
+                    self.assertIn("h1", required)
 
 
 class SessionTest(unittest.TestCase):

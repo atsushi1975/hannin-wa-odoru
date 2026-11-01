@@ -17,6 +17,9 @@ class ApiTest(unittest.TestCase):
     def setUp(self):
         rooms.reset()
         realtime.reset()
+        patcher = patch.object(rooms, "CPU_TURN_DELAY_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.app = create_app({"TESTING": True})
 
     def client(self):
@@ -97,6 +100,36 @@ class ApiTest(unittest.TestCase):
 
         self.assertEqual(self.start(client_b, room_id, player_b["token"]).status_code, 403)
         self.assertEqual(self.start(host_client, room_id, host["token"]).status_code, 400)
+
+    def test_start_with_cpus_runs_cpu_turns_until_human(self):
+        host_client, host = self.create_room("ホスト")
+        room_id = host["roomId"]
+        response = host_client.post(
+            f"/api/rooms/{room_id}/start",
+            headers=self.headers(host["token"]),
+            json={"cpuCount": 2},
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+        data = response.get_json()
+        self.assertEqual(len(data["room"]["players"]), 3)
+        rooms.wait_for_cpus(room_id)
+        game = self.state(host_client, room_id, host["token"]).get_json()["game"]
+        self.assertIsNotNone(game)
+        if game["phase"] == "turn":
+            self.assertEqual(game["currentPlayerId"], host["playerId"])
+
+    def test_start_rejects_invalid_cpu_count(self):
+        host_client, host = self.create_room("ホスト")
+        room_id = host["roomId"]
+        for value in (-1, True, "2", 1.5):
+            with self.subTest(value=value):
+                response = host_client.post(
+                    f"/api/rooms/{room_id}/start",
+                    headers=self.headers(host["token"]),
+                    json={"cpuCount": value},
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertFalse(rooms.get_room(room_id).started)
 
     def test_join_after_start_is_rejected(self):
         room_id, host_client, host, tokens, clients = self.three_players()

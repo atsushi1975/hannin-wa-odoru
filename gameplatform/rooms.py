@@ -6,17 +6,25 @@
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import games, sessions
+from . import games, realtime, sessions
 from .errors import RoomError
+
+logger = logging.getLogger("gameplatform.rooms")
 
 LOCK = threading.RLock()
 
+# CPU が1手打つ前に待つ時間（秒）。人間が直前の手を見られるように空ける。
+CPU_TURN_DELAY_SECONDS = 1.5
+
 _rooms: dict[str, "Room"] = {}
+_cpu_threads: dict[str, threading.Thread] = {}
 
 
 @dataclass(slots=True)
@@ -29,6 +37,10 @@ class Room:
     game: Any | None = None
     # ロビーの変化（入室・退出・開始）を検知するための版番号。
     version: int = 0
+    # CPU の手番を進める駆動器（CPU 参加つきで開始したときだけ入る）。
+    cpu_driver: Any | None = None
+    # CPU の手番を進めるスレッドが動いているか（LOCK 内で更新する）。
+    cpu_running: bool = False
 
     @property
     def started(self) -> bool:
@@ -118,7 +130,7 @@ def take_host(room_id: str, token: str) -> tuple[Room, str]:
         return room, player_id
 
 
-def start_game(room_id: str, token: str) -> tuple[Room, str]:
+def start_game(room_id: str, token: str, cpu_count: int = 0) -> tuple[Room, str]:
     with LOCK:
         room, player_id = authenticate(room_id, token)
         definition = room.definition
@@ -126,19 +138,68 @@ def start_game(room_id: str, token: str) -> tuple[Room, str]:
             raise RoomError("開始できるのはホストだけです。", status=403)
         if room.started:
             raise RoomError("すでに開始しています。")
-        if len(room.players) < definition.min_players:
+        if cpu_count and definition.cpu_driver is None:
+            raise RoomError("このゲームはCPUに対応していません。")
+        total = len(room.players) + cpu_count
+        if total > definition.max_players:
+            raise RoomError(f"CPUを含めて{definition.max_players}人までです。")
+        if total < definition.min_players:
             raise RoomError(f"{definition.min_players}人以上で開始できます。")
+        cpus = _new_cpus(room, cpu_count)
         game = definition.create(
-            [(player["id"], player["name"]) for player in room.players],
+            [(player["id"], player["name"]) for player in [*room.players, *cpus]],
             dict(room.config),
         )
         try:
             game.start()
         except ValueError as exc:
             raise RoomError(str(exc)) from exc
+        room.players.extend(cpus)
         room.game = game
+        if cpus:
+            room.cpu_driver = definition.cpu_driver(game, [cpu["id"] for cpu in cpus], dict(room.config))
         room.version += 1
+        kick_cpus(room)
         return room, player_id
+
+
+def kick_cpus(room: Room) -> None:
+    """CPU の手番を別スレッドで進め始める（LOCK 内で呼ぶ）。動いていれば何もしない。
+
+    人間の操作のあとや開始直後に呼ぶ。1手ごとに ``CPU_TURN_DELAY_SECONDS`` 待ち、
+    待ちの間はロックを持たない。CPU が打てなくなったらスレッドは終わる。
+    """
+    if room.cpu_driver is None or room.cpu_running:
+        return
+    room.cpu_running = True
+    thread = threading.Thread(target=_run_cpus, args=(room.id,), daemon=True)
+    _cpu_threads[room.id] = thread
+    thread.start()
+
+
+def _run_cpus(room_id: str) -> None:
+    while True:
+        time.sleep(CPU_TURN_DELAY_SECONDS)
+        with LOCK:
+            room = _rooms.get(room_id)
+            if room is None or room.cpu_driver is None or room.game is None:
+                return
+            try:
+                acted = room.cpu_driver.step(room.game)
+            except Exception:
+                logger.exception("CPU の手番処理で例外が起きたため止めました。 room=%s", room_id)
+                acted = False
+            if not acted:
+                room.cpu_running = False
+                return
+        realtime.publish(room_id)
+
+
+def wait_for_cpus(room_id: str, timeout: float = 10.0) -> None:
+    """テスト用。CPU の手番スレッドが終わるまで待つ。"""
+    thread = _cpu_threads.get(room_id)
+    if thread is not None:
+        thread.join(timeout)
 
 
 def get_room(room_id: str) -> Room:
@@ -208,7 +269,21 @@ def reset() -> None:
     """テスト用。"""
     with LOCK:
         _rooms.clear()
+        _cpu_threads.clear()
         sessions.reset()
+
+
+def _new_cpus(room: Room, count: int) -> list[dict[str, str]]:
+    """CPU 用のプレイヤー（トークンは持たない）。名前は既存の名前と重ならないように付ける。"""
+    taken = {player["name"].casefold() for player in room.players}
+    cpus = []
+    number = 1
+    for _ in range(count):
+        while f"cpu{number}" in taken:
+            number += 1
+        taken.add(f"cpu{number}")
+        cpus.append({"id": f"cpu-{uuid.uuid4().hex[:8]}", "name": f"CPU{number}"})
+    return cpus
 
 
 def _add_player(room: Room, name: str) -> tuple[str, str]:
