@@ -312,10 +312,10 @@ body.room {
   margin: 20px auto 0;
 }
 
+/* 自分を下にした円形のテーブル。座標は JS が席順から計算する。 */
 .players {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  position: relative;
+  height: clamp(420px, 60vh, 600px);
   margin-bottom: 20px;
 }
 
@@ -330,9 +330,68 @@ body.room {
   gap: 2px;
 }
 
+.players .seat {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  min-width: 0;
+  width: clamp(112px, 15vw, 168px);
+  transform: translate(-50%, -50%);
+  text-align: center;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
 .player.current {
   border-color: var(--gold);
-  box-shadow: 0 0 0 1px rgba(216, 178, 92, 0.35), 0 0 24px rgba(216, 178, 92, 0.12);
+  box-shadow: 0 0 0 1px rgba(216, 178, 92, 0.5), 0 0 28px rgba(216, 178, 92, 0.35);
+  animation: turn-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes turn-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(216, 178, 92, 0.5), 0 0 14px rgba(216, 178, 92, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(240, 217, 160, 0.85), 0 0 34px rgba(216, 178, 92, 0.55);
+  }
+}
+
+.table-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.direction-mark {
+  font-size: clamp(2.2rem, 6vw, 3.4rem);
+  line-height: 1;
+  color: var(--gold);
+  text-shadow: 0 0 18px rgba(216, 178, 92, 0.45);
+}
+
+.direction-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.next-up {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--gold-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player.current {
+    animation: none;
+  }
 }
 
 .player.mine {
@@ -710,6 +769,28 @@ body.room {
   font-size: 0.9rem;
 }
 
+.result-cpus {
+  margin: 16px 0 0;
+  padding: 12px;
+  list-style: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(216, 178, 92, 0.25);
+  display: grid;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+
+.result-cpus-title {
+  color: var(--gold);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+}
+
+.result-cpu {
+  color: #dfe9e4;
+}
+
 .button {
   display: inline-block;
   margin-top: 18px;
@@ -719,6 +800,23 @@ body.room {
 @media (max-width: 640px) {
   body.room {
     padding: 0 12px 32px;
+  }
+
+  .players {
+    height: clamp(380px, 58vh, 520px);
+  }
+
+  .players .seat {
+    width: 104px;
+    padding: 8px 6px;
+  }
+
+  .player-name {
+    font-size: 0.85rem;
+  }
+
+  .next-up {
+    font-size: 0.66rem;
   }
 
   .piles {

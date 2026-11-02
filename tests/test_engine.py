@@ -5,7 +5,7 @@ import unittest
 
 from games.hannin.cards import CardType as T
 from games.hannin.config import RuleConfig
-from games.hannin.engine import FINISHED, PENDING, TURN, InvalidAction
+from games.hannin.engine import CLOCKWISE, FINISHED, PENDING, TURN, InvalidAction
 from games.hannin.views import player_view
 from tests.helpers import all_hand_ids, card_of, make_game, play
 
@@ -19,10 +19,16 @@ class StartTest(unittest.TestCase):
         )
         game.start()
         self.assertEqual(game.phase, TURN)
+        self.assertEqual(game.direction, CLOCKWISE)
         self.assertEqual(game.started_by, "p1")
         self.assertEqual(len(game.players[0].hand), 3)
         self.assertEqual(game.played[0]["card"]["type"], T.FIRST_FINDER.value)
         self.assertEqual(game.players[game.current_index].id, "p2")
+        # 向きは「時計回り」。次の手番も向きの値から決まる。
+        self.assertEqual(game.next_player_id(), "p3")
+        view = player_view(game, "p1")
+        self.assertEqual(view["direction"], CLOCKWISE)
+        self.assertEqual(view["nextPlayerId"], "p3")
 
     def test_cannot_start_twice(self):
         game = make_game(

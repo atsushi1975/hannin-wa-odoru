@@ -11,7 +11,7 @@ from collections import deque
 from collections.abc import Collection
 from typing import Any
 
-from .cards import CardType
+from .cards import TOTAL_COUNTS, CardType
 from .config import HAND_SIZE, RuleConfig
 
 logger = logging.getLogger("hannin.cpu")
@@ -20,7 +20,11 @@ logger = logging.getLogger("hannin.cpu")
 DETECTIVE_THRESHOLD = 0.72
 
 # 推定が参照する直近の出札数（手数）。これより前の公開情報は使わない。None なら全期間。
+# （CPU は生成時に 1d6×1d6 で個別の窓を持つ。この値は既定値・比較用。）
 DEFAULT_MEMORY_WINDOW = 10
+
+# 公式デッキの総枚数。記憶窓 N がこれを超えたら「全履歴」として扱う。
+MAX_DECK_SIZE = sum(TOTAL_COUNTS.values())
 
 _EPS = 1e-12
 _CULPRIT = CardType.CULPRIT.value
@@ -33,6 +37,39 @@ _MOVE_NOTES: dict[str, tuple[str, ...]] = {
 }
 _RECEIVED_NOTE = {"rumor": "rumor_draw", "info_op": "info_op_received", "trade": "trade"}
 _RESULT_NOTES = ("boy", "witness")
+
+
+def roll_memory_window(rng: random.Random) -> dict[str, Any]:
+    """CPU 1 体分の記憶窓を 1d6×1d6 で決める（生成時に 1 回だけ）。
+
+    戻り値は表示用の出目・合計・ラベル。推定器に渡す窓は
+    ``memory_window_for(total)`` で求める。
+    """
+    first = rng.randint(1, 6)
+    second = rng.randint(1, 6)
+    total = first * second
+    return {
+        "dice": [first, second],
+        "total": total,
+        "label": memory_label(total),
+    }
+
+
+def memory_window_for(total: int) -> int | None:
+    """記憶窓 N を推定器の ``memory_window`` に変換する。
+
+    N がデッキの総枚数（32）を超える場合は、その試合の全履歴を使う（None）。
+    """
+    return None if total > MAX_DECK_SIZE else total
+
+
+def memory_label(total: int) -> str:
+    """結果画面に出す記憶窓の表示。N 以外の内部状態は含めない。"""
+    if total > MAX_DECK_SIZE:
+        return "全記憶"
+    if total == 1:
+        return "ほぼ金魚"
+    return f"{total}手"
 
 
 class CulpritEstimator:

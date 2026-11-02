@@ -19,7 +19,14 @@ TURN = "turn"
 PENDING = "pending"
 FINISHED = "finished"
 
+# 進行の向き。今回は「時計回り」だけ。将来の反転カードに備えて、
+# 手番計算は必ずこの値から進む方向（+1 / -1）を引く。
+CLOCKWISE = "clockwise"
+DIRECTION_STEPS: dict[str, int] = {CLOCKWISE: 1}
+
 __all__ = [
+    "CLOCKWISE",
+    "DIRECTION_STEPS",
     "FINISHED",
     "LOBBY",
     "PENDING",
@@ -89,6 +96,8 @@ class Game:
         self.phase = LOBBY
         self.revision = 0
         self.current_index = 0
+        # 進行の向き（表示・手番計算の両方が参照する）。
+        self.direction: str = CLOCKWISE
         self.started_by: str | None = None
         self.pending: Pending | None = None
         self.played: list[dict[str, Any]] = []
@@ -421,14 +430,32 @@ class Game:
 
     def _advance_turn(self) -> None:
         count = len(self.players)
+        step_unit = DIRECTION_STEPS[self.direction]
         for step in range(1, count + 1):
-            index = (self.current_index + step) % count
+            index = (self.current_index + step * step_unit) % count
             candidate = self.players[index]
             if candidate.hand:
                 self.current_index = index
                 self.phase = TURN
                 return
         self._finish("stalemate", [], [], "全員の手札がなくなり、勝敗がつかなかった。")
+
+    def next_player_id(self) -> str | None:
+        """現在の手番の次に手番が回る人。向きと手札の有無から決める。
+
+        終了後・待機中など手番が無いときは None。手札のない人は飛ばす
+        （``_advance_turn`` と同じ規則）。
+        """
+        if self.phase not in (TURN, PENDING):
+            return None
+        count = len(self.players)
+        step_unit = DIRECTION_STEPS[self.direction]
+        for step in range(1, count):
+            index = (self.current_index + step * step_unit) % count
+            candidate = self.players[index]
+            if candidate.hand:
+                return candidate.id
+        return None
 
     def _validate_play(self, player: Player, card: Card, inert: bool) -> None:
         if self.phase != TURN:

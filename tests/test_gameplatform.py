@@ -151,11 +151,28 @@ class CpuPlayersTest(unittest.TestCase):
         started, _ = rooms.start_game(room.id, host_token, 2)
         rooms.wait_for_cpus(room.id)
         names = [player["name"] for player in started.players]
-        self.assertEqual(names, ["P1", "CPU1", "CPU2"])
-        self.assertEqual([player.id for player in started.game.players][0], host_id)
+        self.assertEqual(names, ["P1", "CPU1", "CPU2"])  # ロビーの参加順はそのまま
+        # ゲームの席順はサーバー側でシャッフルされるため、参加順とは限らない。
+        self.assertEqual(
+            {player.id for player in started.game.players},
+            {player["id"] for player in started.players},
+        )
+        self.assertIn(host_id, {player.id for player in started.game.players})
         self.assertEqual(len(started.game.players), 3)
         self.assertIsNotNone(started.cpu_driver)
         self.assertEqual(started.public()["players"][1]["name"], "CPU1")
+
+    def test_start_uses_server_side_seat_order(self):
+        room, _, host_token = rooms.create_room("P1")
+        rooms.join_room(room.id, "P2")
+        rooms.join_room(room.id, "P3")
+        join_order = [player["id"] for player in room.players]
+
+        # シャッフル処理そのものを差し替えて、ゲームへ席順が渡ることを確認する。
+        with patch.object(rooms, "_seat_order", lambda players: list(reversed(players))):
+            started, _ = rooms.start_game(room.id, host_token)
+
+        self.assertEqual([player.id for player in started.game.players], list(reversed(join_order)))
 
     def test_cpu_names_skip_human_names(self):
         room, _, host_token = rooms.create_room("CPU1")

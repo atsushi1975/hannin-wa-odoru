@@ -14,7 +14,7 @@ from gameplatform.errors import ConfigurationError, InvalidAction
 from gameplatform.games import GameDefinition, register
 
 from .config import RuleConfig
-from .cpu import DEFAULT_MEMORY_WINDOW, CulpritEstimator, choose_action
+from .cpu import CulpritEstimator, choose_action, memory_window_for, roll_memory_window
 from .engine import Game
 from .views import player_view
 
@@ -104,14 +104,41 @@ class CpuDriver:
     （人間の番・ゲーム終了・詰み）。待ち時間は呼び出し側（rooms）が管理する。
     """
 
-    def __init__(self, game: Game, cpu_ids: list[str], config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        game: Game,
+        cpu_ids: list[str],
+        config: dict[str, Any],
+        rng: random.Random | None = None,
+    ) -> None:
         self.cpu_ids = list(cpu_ids)
         self.rule = RuleConfig(**config)
-        self.rng = random.Random()
-        self.estimators = {
-            cpu_id: CulpritEstimator(cpu_id, memory_window=DEFAULT_MEMORY_WINDOW) for cpu_id in self.cpu_ids
-        }
+        self.rng = rng or random.Random()
         self.steps = 0
+
+        # 記憶窓 N は CPU の生成時に 1 回だけ振る（毎手番は振り直さない）。
+        self.memory: dict[str, dict[str, Any]] = {}
+        self.estimators: dict[str, CulpritEstimator] = {}
+        for cpu_id in self.cpu_ids:
+            rolled = roll_memory_window(self.rng)
+            self.memory[cpu_id] = rolled
+            self.estimators[cpu_id] = CulpritEstimator(
+                cpu_id, memory_window=memory_window_for(rolled["total"])
+            )
+            # N のログは DEBUG が有効なときだけ出す。
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "CPU %s の記憶窓 N=%d (%d×%d, %s)",
+                    cpu_id,
+                    rolled["total"],
+                    rolled["dice"][0],
+                    rolled["dice"][1],
+                    rolled["label"],
+                )
+
+        # 結果画面（views）が N だけを読めるようにゲームへ添付する。
+        # 推定器の確率など内部状態はここに含めない。
+        game.cpu_memory = {cpu_id: dict(info) for cpu_id, info in self.memory.items()}
 
     def step(self, game: Game) -> bool:
         if self.steps >= _MAX_CPU_STEPS:

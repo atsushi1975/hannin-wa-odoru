@@ -40,6 +40,9 @@ def player_view(game: Game, player_id: str) -> dict[str, Any]:
         "revision": game.revision,
         "phase": game.phase,
         "currentPlayerId": current_player_id,
+        # 「時計回り」などの向き。表示も手番計算もこの値を参照する。
+        "direction": game.direction,
+        "nextPlayerId": game.next_player_id(),
         "startedBy": game.started_by,
         "players": [
             {
@@ -71,7 +74,7 @@ def player_view(game: Game, player_id: str) -> dict[str, Any]:
 def _result_view(game: Game) -> dict[str, Any] | None:
     if game.result is None:
         return None
-    return {
+    result: dict[str, Any] = {
         "reason": game.result["reason"],
         "message": game.result["message"],
         "winners": [
@@ -81,3 +84,20 @@ def _result_view(game: Game) -> dict[str, Any] | None:
             {"id": pid, "name": game.by_id[pid].name} for pid in game.result["losers"]
         ],
     }
+
+    # CPU の記憶窓 N だけを結果に含める（確率・推定器の内部状態は出さない）。
+    memory = getattr(game, "cpu_memory", None)
+    if memory:
+        order = {player.id: index for index, player in enumerate(game.players)}
+        result["cpuMemory"] = [
+            {
+                "id": cpu_id,
+                "name": game.by_id[cpu_id].name,
+                "dice": list(info["dice"]),
+                "total": info["total"],
+                "label": info["label"],
+            }
+            for cpu_id, info in sorted(memory.items(), key=lambda item: order.get(item[0], 999))
+            if cpu_id in game.by_id
+        ]
+    return result

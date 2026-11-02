@@ -32,11 +32,21 @@ const els = {
   resultMessage: document.getElementById("result-message"),
   resultWinners: document.getElementById("result-winners"),
   resultLosers: document.getElementById("result-losers"),
+  resultCpus: document.getElementById("result-cpus"),
   copyRoom: document.getElementById("copy-room"),
   leaveRoom: document.getElementById("leave-room"),
 };
 
 const NEEDS_TARGET = new Set(["detective", "dog", "witness", "trade"]);
+
+// 進行の向き。サーバーが返す direction を表示に使う（将来の反転に備える）。
+const DIRECTIONS = {
+  clockwise: { symbol: "↻", label: "時計回り", step: 1 },
+};
+
+function directionInfo(direction) {
+  return DIRECTIONS[direction] || DIRECTIONS.clockwise;
+}
 
 const CARD_ICONS = {
   first_finder: "🔎",
@@ -72,6 +82,8 @@ let busy = false;
 let errorTimer = null;
 let eventSource = null;
 let streamRetry = null;
+// ゲーム開始直後だけ、他のプレイヤーの席移動アニメーションを行う。
+let seatAnimationPending = false;
 
 function readSession() {
   try {
@@ -121,9 +133,12 @@ async function request(path, { method = "GET", body } = {}) {
 }
 
 function apply(data) {
+  const wasInGame = Boolean(gameState);
   roomState = data.room;
   youState = data.you || null;
   gameState = data.game;
+  // ロビーからゲーム開始へ移る瞬間だけ、席替えのアニメーションを有効にする。
+  if (!wasInGame && gameState) seatAnimationPending = true;
   els.joinPanel.hidden = true;
   if (!gameState) {
     els.lobbyPanel.hidden = false;
@@ -196,6 +211,7 @@ function renderLobby() {
   for (const player of roomState.players) {
     const item = el("li", "lobby-player");
     item.append(el("span", "dot"));
+    item.dataset.playerId = player.id;
     const name = el("span", "name", player.name);
     item.append(name);
     if (player.id === roomState.hostId) item.append(el("span", "badge", "ホスト"));
@@ -227,16 +243,7 @@ function renderGame() {
   const myTurn = gameState.phase === "turn" && gameState.currentPlayerId === me.id;
   const pendingSelection = pending && pending.isRequired && !pending.hasSelected;
 
-  els.players.replaceChildren();
-  for (const player of gameState.players) {
-    const card = el("div", "player" + (player.isCurrent ? " current" : "") + (player.isMe ? " mine" : ""));
-    card.append(el("span", "player-name", player.name));
-    card.append(el("span", "player-meta", `手札 ${player.handCount} 枚`));
-    if (player.tricksPlayed > 0) card.append(el("span", "player-tag", `たくらみ ${player.tricksPlayed}`));
-    if (player.isMe) card.append(el("span", "player-tag me", "あなた"));
-    if (player.isCurrent && gameState.phase !== "finished") card.append(el("span", "player-tag turn", "手番"));
-    els.players.append(card);
-  }
+  renderSeats();
 
   renderPlayed();
   renderNotes();
@@ -252,8 +259,109 @@ function renderGame() {
       "勝者: " + (gameState.result.winners.map((p) => p.name).join("、") || "なし");
     els.resultLosers.textContent =
       "敗者: " + (gameState.result.losers.map((p) => p.name).join("、") || "なし");
+    renderCpuMemory(gameState.result.cpuMemory);
   } else {
     els.resultOverlay.hidden = true;
+  }
+}
+
+function renderCpuMemory(cpuMemory) {
+  els.resultCpus.replaceChildren();
+  if (!Array.isArray(cpuMemory) || cpuMemory.length === 0) {
+    els.resultCpus.hidden = true;
+    return;
+  }
+  els.resultCpus.hidden = false;
+  els.resultCpus.append(el("li", "result-cpus-title", "CPU の記憶窓"));
+  for (const cpu of cpuMemory) {
+    const dice = Array.isArray(cpu.dice) ? `${cpu.dice[0]}×${cpu.dice[1]}` : String(cpu.total);
+    const item = el("li", "result-cpu", `${cpu.name}: ${dice}（${cpu.label}）`);
+    els.resultCpus.append(item);
+  }
+}
+
+// 自分を常に画面下に置き、他のプレイヤーを席順（時計回り）に並べる。
+function renderSeats() {
+  const previousRects = new Map();
+  if (seatAnimationPending) {
+    for (const node of document.querySelectorAll("[data-player-id]")) {
+      previousRects.set(node.dataset.playerId, node.getBoundingClientRect());
+    }
+  }
+
+  els.players.replaceChildren();
+
+  const players = gameState.players;
+  const meId = gameState.me.id;
+  const myIndex = players.findIndex((player) => player.id === meId);
+  const count = players.length;
+  const info = directionInfo(gameState.direction);
+  const nextName = gameState.nextPlayerId ? playerName(gameState.nextPlayerId) : null;
+
+  const center = el("div", "table-center");
+  center.append(el("span", "direction-mark", info.symbol));
+  center.append(el("span", "direction-label", info.label));
+  els.players.append(center);
+
+  const narrow = window.innerWidth < 640;
+  const radiusX = narrow ? 34 : count >= 7 ? 36 : 38;
+  const radiusY = narrow ? 34 : 36;
+
+  players.forEach((player, index) => {
+    const offset = (index - myIndex + count) % count;
+    const angle = (180 + offset * (360 / count)) * (Math.PI / 180);
+    const seat = el(
+      "div",
+      "player seat" + (player.isCurrent ? " current" : "") + (player.isMe ? " mine" : "")
+    );
+    seat.dataset.playerId = player.id;
+    seat.style.left = `${50 + radiusX * Math.sin(angle)}%`;
+    seat.style.top = `${50 - radiusY * Math.cos(angle)}%`;
+    seat.append(el("span", "player-name", player.name));
+    seat.append(el("span", "player-meta", `手札 ${player.handCount} 枚`));
+    if (player.tricksPlayed > 0) seat.append(el("span", "player-tag", `たくらみ ${player.tricksPlayed}`));
+    if (player.isMe) seat.append(el("span", "player-tag me", "あなた"));
+    if (player.isCurrent && gameState.phase !== "finished") {
+      seat.append(el("span", "player-tag turn", "手番"));
+      if (nextName) seat.append(el("span", "next-up", `次は ${nextName}`));
+    }
+    els.players.append(seat);
+  });
+
+  if (seatAnimationPending) {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduceMotion) animateSeats(previousRects, meId);
+    seatAnimationPending = false;
+  }
+}
+
+function animateSeats(previousRects, meId) {
+  const container = els.players.getBoundingClientRect();
+  const centerX = container.left + container.width / 2;
+  const centerY = container.top + container.height / 2;
+  let order = 0;
+  // 自分の位置は動かさない。他のプレイヤーだけ、ロビーの位置（無ければ中央）から運ぶ。
+  for (const seat of els.players.querySelectorAll(".seat")) {
+    if (seat.dataset.playerId === meId) continue;
+    const now = seat.getBoundingClientRect();
+    const previous = previousRects.get(seat.dataset.playerId);
+    const fromX = previous ? previous.left + previous.width / 2 : centerX;
+    const fromY = previous ? previous.top + previous.height / 2 : centerY;
+    const dx = fromX - (now.left + now.width / 2);
+    const dy = fromY - (now.top + now.height / 2);
+    seat.animate(
+      [
+        { transform: `translate(-50%, -50%) translate(${dx}px, ${dy}px) scale(0.7)`, opacity: 0.2 },
+        { transform: "translate(-50%, -50%) translate(0, 0) scale(1)", opacity: 1 },
+      ],
+      {
+        duration: 620,
+        delay: order * 70,
+        easing: "cubic-bezier(0.2, 0.9, 0.2, 1)",
+        fill: "both",
+      }
+    );
+    order += 1;
   }
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import random
 import unittest
@@ -10,7 +11,16 @@ from typing import Any
 
 from games.hannin import CpuDriver, act
 from games.hannin.config import RuleConfig
-from games.hannin.cpu import DEFAULT_MEMORY_WINDOW, DETECTIVE_THRESHOLD, CulpritEstimator, choose_action
+from games.hannin.cpu import (
+    DEFAULT_MEMORY_WINDOW,
+    DETECTIVE_THRESHOLD,
+    MAX_DECK_SIZE,
+    CulpritEstimator,
+    choose_action,
+    memory_label,
+    memory_window_for,
+    roll_memory_window,
+)
 from games.hannin.engine import FINISHED, PENDING, TURN, Game, InvalidAction
 from games.hannin.views import player_view
 
@@ -544,11 +554,53 @@ class MemoryWindowTest(EstimatorTestCase):
         with self.assertRaises(ValueError):
             CulpritEstimator("p1", memory_window=-1)
 
-    def test_cpu_driver_passes_default_window(self):
+    def test_cpu_driver_rolls_a_window_per_cpu_once(self):
         game = Game([("h", "H"), ("c1", "C1"), ("c2", "C2")], config=RuleConfig(), rng=random.Random(0))
-        driver = CpuDriver(game, ["c1", "c2"], {})
-        for estimator in driver.estimators.values():
-            self.assertEqual(estimator._memory_window, DEFAULT_MEMORY_WINDOW)
+        driver = CpuDriver(game, ["c1", "c2"], {}, rng=random.Random(2))
+        for cpu_id in ("c1", "c2"):
+            info = driver.memory[cpu_id]
+            self.assertEqual(info["total"], info["dice"][0] * info["dice"][1])
+            self.assertTrue(1 <= info["dice"][0] <= 6)
+            self.assertTrue(1 <= info["dice"][1] <= 6)
+            expected = None if info["total"] > MAX_DECK_SIZE else info["total"]
+            self.assertEqual(driver.estimators[cpu_id]._memory_window, expected)
+            # 結果用にゲームへ添付されるのは N の情報だけ（確率は含めない）。
+            self.assertEqual(game.cpu_memory[cpu_id], info)
+            self.assertNotIn("probabilities", game.cpu_memory[cpu_id])
+
+        before = copy.deepcopy(driver.memory)
+        game.start()
+        driver.step(game)
+        self.assertEqual(driver.memory, before)  # 毎手番は振り直さない
+
+    def test_memory_window_mapping_and_labels(self):
+        self.assertEqual(memory_window_for(1), 1)
+        self.assertEqual(memory_window_for(32), 32)
+        self.assertIsNone(memory_window_for(33))
+        self.assertIsNone(memory_window_for(36))
+        self.assertEqual(memory_label(1), "ほぼ金魚")
+        self.assertEqual(memory_label(12), "12手")
+        self.assertEqual(memory_label(32), "32手")
+        self.assertEqual(memory_label(33), "全記憶")
+        self.assertEqual(memory_label(36), "全記憶")
+
+        rolled = roll_memory_window(random.Random(0))
+        self.assertEqual(rolled["total"], rolled["dice"][0] * rolled["dice"][1])
+        self.assertEqual(rolled["label"], memory_label(rolled["total"]))
+
+    def test_result_view_exposes_only_cpu_memory(self):
+        game = Game([("h", "H"), ("c1", "C1"), ("c2", "C2")], config=RuleConfig(), rng=random.Random(0))
+        CpuDriver(game, ["c1", "c2"], {}, rng=random.Random(1))
+        self.assertIsNone(player_view(game, "h")["result"])
+
+        game.result = {"reason": "stalemate", "winners": [], "losers": [], "message": "終了"}
+        result = player_view(game, "h")["result"]
+        self.assertEqual({item["id"] for item in result["cpuMemory"]}, {"c1", "c2"})
+        for item in result["cpuMemory"]:
+            self.assertEqual(set(item), {"id", "name", "dice", "total", "label"})
+        serialized = json.dumps(result)
+        self.assertNotIn("probabilit", serialized)
+        self.assertNotIn("estimator", serialized)
 
 
 TRICK_PLAYED = [{"playerId": "p1", "playerName": "P1", "card": card("trick")}]

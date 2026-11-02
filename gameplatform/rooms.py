@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 import uuid
@@ -25,6 +26,7 @@ CPU_TURN_DELAY_SECONDS = 1.5
 
 _rooms: dict[str, "Room"] = {}
 _cpu_threads: dict[str, threading.Thread] = {}
+_room_rng = random.Random()
 
 
 @dataclass(slots=True)
@@ -146,8 +148,11 @@ def start_game(room_id: str, token: str, cpu_count: int = 0) -> tuple[Room, str]
         if total < definition.min_players:
             raise RoomError(f"{definition.min_players}人以上で開始できます。")
         cpus = _new_cpus(room, cpu_count)
+        # 席順はサーバー側で決める。ゲームの players 配列がそのまま席順
+        # （手番の回る順）になり、クライアントは結果だけを受け取る。
+        seats = _seat_order([*room.players, *cpus])
         game = definition.create(
-            [(player["id"], player["name"]) for player in [*room.players, *cpus]],
+            [(player["id"], player["name"]) for player in seats],
             dict(room.config),
         )
         try:
@@ -271,6 +276,17 @@ def reset() -> None:
         _rooms.clear()
         _cpu_threads.clear()
         sessions.reset()
+
+
+def _seat_order(players: list[dict[str, str]]) -> list[dict[str, str]]:
+    """ゲーム開始時の席順を決める（サーバー側）。
+
+    参加順やホストを固定せず、毎回ランダムに並べ替える。クライアントには
+    並べ替え後の ``Game.players`` だけを返し、抽選の過程は送らない。
+    """
+    seats = list(players)
+    _room_rng.shuffle(seats)
+    return seats
 
 
 def _new_cpus(room: Room, count: int) -> list[dict[str, str]]:
