@@ -8,6 +8,7 @@
 </head>
 <body class="home">
   <main class="home-card">
+    <a id="back-to-lobby" class="home-back" href="/">← 共通ロビーに戻る</a>
     <h1>犯人は踊る</h1>
     <p class="tagline">3〜8人で遊ぶ、推理カードゲーム。</p>
 
@@ -41,6 +42,13 @@
 
   <script>
     const errorEl = document.getElementById("error");
+
+    // 共通ロビー（game-lobby）は同じホストのルート（既定ポート80）で動いている。
+    // 既存の GET / をそのまま使い、このアプリ側に新しい経路は足さない。
+    const lobbyLink = document.getElementById("back-to-lobby");
+    if (lobbyLink) {
+      lobbyLink.href = `${location.protocol}//${location.hostname}/`;
+    }
 
     const roomSelect = document.getElementById("join-room");
     const roomListStatus = document.getElementById("room-list-status");

@@ -70,6 +70,30 @@ body.home {
   color: var(--gold-soft);
 }
 
+/* 共通ロビーへ戻るリンク。既存のボタンと同じ枠線・背景・角丸に合わせる。 */
+.home-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--panel);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.home-back:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.home-back:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
 .tagline {
   margin: 6px 0 28px;
   color: var(--muted);
