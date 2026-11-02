@@ -35,26 +35,33 @@ pip install -r requirements.txt
 
 ## 起動
 
+### 開発用（Flask 開発サーバー）
+
 ```bash
 cd hannin-wa-odoru
 python app.py
 ```
 
 既定では `0.0.0.0:5000` で待ち受けます。`http://127.0.0.1:5000`（または `http://<PCのIPアドレス>:5000`）を開いてください。
-ポートを変える場合は `--port` を指定します:
+ポートを変える場合は `--port` を指定します（`python app.py --port 5055`）。自動リロードは `--debug` を付けます。
+
+開発サーバーを LAN に公開するため、信頼できるネットワークでのみ使うこと。
+
+### 本番用（gunicorn、Linux / Docker / VPS）
 
 ```bash
-python app.py --port 5055
+cd hannin-wa-odoru
+pip install -r requirements.txt
+SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
+PORT=5000 gunicorn -w 1 -k gthread --threads 64 -b 0.0.0.0:${PORT:-5000} "web:create_app()"
 ```
 
-自動リロード（開発時のみ）:
-
-```bash
-python app.py --debug
-```
-
-起動後は `http://<PCのIPアドレス>:5000`（例: `http://192.168.0.13:5000`）をスマホ等から開けます。
-ファイアウォールでポート 5000 が許可されているか確認すること。開発サーバーを LAN に公開するため、信頼できるネットワークでのみ使うこと。
+- **ワーカーは `-w 1` のまま変えないこと。** ルーム・ゲーム状態・セッションはプロセスのメモリ上にあり、複数ワーカーにするとルームが共有されず壊れる。並行処理は `--threads` で行う。
+- `--threads` は SSE（リアルタイム更新）の接続数の上限になる。接続 1 本がスレッド 1 本を使う。
+- `SECRET_KEY` は必ず環境変数で渡す。未設定の場合は警告が出て、起動ごとのランダムな値で動く。
+- `PORT` は待ち受けポート（既定 5000）。`game-lobby/servers.json` の `health` / `url` のポートと合わせる。
+- WebSocket は使っていないため、gunicorn の worker class は標準の `gthread` でよい（eventlet / gevent は不要）。
+- gunicorn は Windows では動かない。Windows で動かす場合は開発用の `python app.py` を使う。
 
 ## 遊び方
 
@@ -141,9 +148,9 @@ API は画面に依存しないので、後から React に置き換えられる
 ### 開発用の制限
 
 - 状態は **メモリのみ**。サーバーを再起動するとルームは消える。
-- **単一プロセス専用**。複数ワーカーで起動するとルームが共有されない。
-- `app.py` は Flask 標準の開発サーバー。そのままインターネットに公開しない。
-- `SECRET_KEY` は既定で開発用の固定値。公開するなら環境変数で差し替える。
+- **単一プロセス専用**。複数ワーカーで起動するとルームが共有されない（`gunicorn -w 1` を維持）。
+- `app.py` は Flask 標準の開発サーバー。そのままインターネットに公開しない（公開時は gunicorn を使う）。
+- `SECRET_KEY` は環境変数で渡す。未設定だと警告が出る。
 
 ## 次にやること
 

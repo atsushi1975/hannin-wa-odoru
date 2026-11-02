@@ -5,17 +5,32 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import secrets
 
 from flask import Flask, jsonify, render_template
 
 import games  # noqa: F401  （ゲーム登録のための副作用 import）
 from .api import api, health_payload
 
+logger = logging.getLogger("hannin.web")
+
+
+def _secret_key() -> str:
+    key = os.environ.get("SECRET_KEY", "").strip()
+    if key:
+        return key
+    logger.warning(
+        "SECRET_KEY が未設定です。起動ごとのランダムな値を使います。"
+        "公開時は環境変数 SECRET_KEY を設定してください。"
+    )
+    return secrets.token_hex(32)
+
 
 def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__)
-    app.config.from_mapping(SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-secret"))
+    app.config.from_mapping(SECRET_KEY=_secret_key())
     if test_config:
         app.config.update(test_config)
     app.register_blueprint(api)
