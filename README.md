@@ -6,6 +6,7 @@
 - ルール: [RULES.md](RULES.md)
 - 設計（スキーマ・状態機械・API）: [DESIGN.md](DESIGN.md)
 - リポジトリ: https://github.com/atsushi1975/hannin-wa-odoru
+- ライセンス: [LICENSE](LICENSE)(作者: atsushi1975(Atsushi Sakamoto) / © 2026 All rights reserved)
 
 ## いまの状態
 
