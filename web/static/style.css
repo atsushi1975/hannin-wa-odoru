@@ -362,7 +362,8 @@ body.room {
   width: clamp(112px, 15vw, 168px);
   transform: translate(-50%, -50%);
   text-align: center;
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease,
+    outline-color 0.2s ease;
 }
 
 .player.current {
@@ -379,6 +380,42 @@ body.room {
   50% {
     box-shadow: 0 0 0 2px rgba(240, 217, 160, 0.85), 0 0 34px rgba(216, 178, 92, 0.55);
   }
+}
+
+/* 対象指定中は席そのものをボタンとして扱う。位置・transform は変更しない。 */
+.players .seat.targetable {
+  cursor: pointer;
+  border-color: rgba(240, 217, 160, 0.9);
+  background: rgba(216, 178, 92, 0.14);
+  outline: 2px dashed rgba(240, 217, 160, 0.9);
+  outline-offset: 2px;
+  z-index: 2;
+}
+
+.players .seat.targetable:hover,
+.players .seat.targetable:focus-visible {
+  background: rgba(216, 178, 92, 0.22);
+  outline-style: solid;
+}
+
+.players .seat.targetable:focus-visible {
+  outline: 3px solid var(--gold-soft);
+  outline-offset: 3px;
+}
+
+.players .seat.target-selected {
+  border-color: var(--gold);
+  background: rgba(216, 178, 92, 0.3);
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(216, 178, 92, 0.25), 0 0 22px rgba(216, 178, 92, 0.45);
+  z-index: 3;
+}
+
+/* 重なった席がタップを奪わないように、選べない席は当たり判定から外す。 */
+.players.selecting-target .seat:not(.targetable) {
+  pointer-events: none;
+  opacity: 0.7;
 }
 
 .table-center {
@@ -415,6 +452,10 @@ body.room {
 @media (prefers-reduced-motion: reduce) {
   .player.current {
     animation: none;
+  }
+
+  .players .seat {
+    transition: none;
   }
 }
 
@@ -831,8 +872,9 @@ body.room {
   }
 
   .players .seat {
-    width: 104px;
-    padding: 8px 6px;
+    width: 92px;
+    min-height: 48px;
+    padding: 7px 4px;
   }
 
   .player-name {

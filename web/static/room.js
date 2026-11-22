@@ -333,6 +333,7 @@ function renderSeats() {
     if (!reduceMotion) animateSeats(previousRects, meId);
     seatAnimationPending = false;
   }
+  updateSeatSelection();
 }
 
 function animateSeats(previousRects, meId) {
@@ -368,6 +369,86 @@ function animateSeats(previousRects, meId) {
 function playerName(playerId) {
   const player = gameState.players.find((candidate) => candidate.id === playerId);
   return player ? player.name : "?";
+}
+
+// 対象指定の案内・判定をボタン一覧と席で共通化するためのヘルパー。
+function canSelectTargetSeats(card) {
+  return Boolean(
+    card &&
+      NEEDS_TARGET.has(card.type) &&
+      gameState.phase === "turn" &&
+      gameState.currentPlayerId === gameState.me.id
+  );
+}
+
+function targetablePlayers(card) {
+  if (!canSelectTargetSeats(card)) return [];
+  return gameState.players.filter((player) => {
+    if (player.id === gameState.me.id) return false;
+    if ((card.type === "dog" || card.type === "trade") && player.handCount === 0) return false;
+    return true;
+  });
+}
+
+// 席を作り直さず、クラスと属性だけを更新する。renderSeats / renderActionPanel の両方から呼ぶ。
+function updateSeatSelection() {
+  const card = currentCard();
+  const canSelect = canSelectTargetSeats(card);
+  const allowed = new Set(targetablePlayers(card).map((player) => player.id));
+  els.players.classList.toggle("selecting-target", canSelect);
+
+  for (const seat of els.players.querySelectorAll(".player.seat")) {
+    const playerId = seat.dataset.playerId;
+    const targetable = allowed.has(playerId);
+    const selected = targetable && targetPlayerId === playerId;
+    seat.classList.toggle("targetable", targetable);
+    seat.classList.toggle("target-selected", selected);
+
+    if (targetable) {
+      const player = gameState.players.find((candidate) => candidate.id === playerId);
+      seat.setAttribute("role", "button");
+      seat.setAttribute("tabindex", "0");
+      seat.setAttribute("aria-pressed", String(selected));
+      seat.setAttribute("aria-label", `${player ? player.name : "相手"}さんを対象に選ぶ`);
+    } else {
+      seat.removeAttribute("role");
+      seat.removeAttribute("tabindex");
+      seat.removeAttribute("aria-pressed");
+      seat.removeAttribute("aria-label");
+    }
+  }
+}
+
+function selectSeatTarget(playerId) {
+  const card = currentCard();
+  if (!gameState || !canSelectTargetSeats(card)) return;
+  if (!targetablePlayers(card).some((player) => player.id === playerId)) return;
+  targetPlayerId = playerId;
+  targetCardIndex = null;
+  renderActionPanel();
+}
+
+// 状態更新で相手が選べなくなった場合に、選択を破棄して確定ボタンを押せないようにする。
+function normalizeTargetSelection(card) {
+  if (!canSelectTargetSeats(card)) {
+    targetPlayerId = null;
+    targetCardIndex = null;
+    return;
+  }
+  const valid = targetablePlayers(card);
+  const target = valid.find((player) => player.id === targetPlayerId);
+  if (!target) {
+    targetPlayerId = null;
+    targetCardIndex = null;
+    return;
+  }
+  if (
+    card.type === "dog" &&
+    targetCardIndex !== null &&
+    (!Number.isInteger(targetCardIndex) || targetCardIndex < 0 || targetCardIndex >= target.handCount)
+  ) {
+    targetCardIndex = null;
+  }
 }
 
 function renderPrompt(myTurn, pending, meInfo) {
@@ -456,8 +537,11 @@ function renderActionPanel() {
   const card = currentCard();
   if (!card) {
     els.actionPanel.hidden = true;
+    updateSeatSelection();
     return;
   }
+  normalizeTargetSelection(card);
+  updateSeatSelection();
   els.actionPanel.hidden = false;
   els.actionBody.replaceChildren();
   els.actionBody.append(el("p", "action-title", `「${card.label}」を出します。`));
@@ -479,20 +563,10 @@ function renderActionPanel() {
       card.type === "trade" ? "誰と取り引きしますか？" :
       "誰を犯人と指名しますか？";
     els.actionBody.append(el("p", "action-sub", targetLabel));
-    const row = el("div", "target-row");
-    for (const player of gameState.players) {
-      if (player.id === gameState.me.id) continue;
-      if ((card.type === "dog" || card.type === "trade") && player.handCount === 0) continue;
-      const button = el("button", "target" + (targetPlayerId === player.id ? " selected" : ""), player.name);
-      button.type = "button";
-      button.addEventListener("click", () => {
-        targetPlayerId = player.id;
-        targetCardIndex = null;
-        renderActionPanel();
-      });
-      row.append(button);
-    }
-    els.actionBody.append(row);
+    const guide = targetPlayerId
+      ? `選択中: ${playerName(targetPlayerId)}`
+      : "テーブルの相手をタップして選んでください";
+    els.actionBody.append(el("p", "hint target-hint", guide));
   }
 
   if (card.type === "dog" && targetPlayerId) {
@@ -762,6 +836,23 @@ els.takeHost.addEventListener("click", async () => {
   } catch (error) {
     showError(error.message);
   }
+});
+
+// 席は再生成されるため、リスナーはコンテナに1回だけ置く。
+els.players.addEventListener("click", (event) => {
+  const seat = event.target instanceof Element ? event.target.closest(".player.seat") : null;
+  if (seat) selectSeatTarget(seat.dataset.playerId);
+});
+
+els.players.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+  const seat =
+    event.target instanceof Element
+      ? event.target.closest('.player.seat[role="button"]')
+      : null;
+  if (!seat) return;
+  event.preventDefault();
+  selectSeatTarget(seat.dataset.playerId);
 });
 
 els.confirmPlay.addEventListener("click", playSelected);
